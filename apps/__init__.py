@@ -1,0 +1,1 @@
+"""OpenWikiRAG deployable applications."""
