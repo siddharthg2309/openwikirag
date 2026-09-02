@@ -2,12 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from uuid import uuid4
 
-import pytest
-
-from apps.worker.app.main import DeferredIngestionHandler
-from openwikirag.application.ingestion import PermanentJobError
 from openwikirag.application.worker import WorkerLoop
 
 
@@ -122,8 +117,3 @@ async def test_cycle_error_rolls_back_and_uses_error_backoff() -> None:
     assert session.rollback_calls == 1
     assert delays == [0.2]
     assert ingestion.calls == ["ensure_group"]
-
-
-async def test_deferred_handler_cannot_claim_extraction_success() -> None:
-    with pytest.raises(PermanentJobError):
-        await DeferredIngestionHandler().handle(job_id=uuid4(), payload={})

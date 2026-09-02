@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-02
-Current verified slice: Phase 3, Slice 3.2 — Canonical normalized-artifact persistence.
+Current verified slice: Phase 3, Slice 3.3 — Worker activation for deterministic artifacts.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 74 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 76 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -36,6 +36,7 @@ Current verified slice: Phase 3, Slice 3.2 — Canonical normalized-artifact per
 | Automated tests | Focused worker lifecycle tests | 4 passed | verified | `uv run pytest apps/worker/tests/test_worker.py` |
 | Automated tests | Focused extraction/provenance tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
+| Automated tests | Focused artifact-activation regression tests | 20 passed | verified | Focused ingestion, worker, and artifact test command in `implementation.md` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
 | Static quality | Mypy | 0 issues across 54 source files | verified | `uv run mypy` |
@@ -57,9 +58,11 @@ Current verified slice: Phase 3, Slice 3.2 — Canonical normalized-artifact per
 | Ingestion | Job-progress lifecycle states exposed | 5 (`pending`, `running`, `retryable`, `succeeded`, `dead_letter`) | verified | `GET /api/v1/jobs/{job_id}` tests |
 | Security | Job progress cross-tenant negative cases | 2 (`foreign job`, `missing job`) | verified | `apps/api/tests/test_jobs.py` |
 | Worker | Real finite-cycle smoke test | 1 successful `--once` run against PostgreSQL 16 + Redis 7 | verified | `uv run python -m apps.worker.app.main --once` with isolated dependency URLs |
+| Worker | Real artifact-processing smoke test | 1 Markdown job: published 1, reclaimed 0, consumed 1, succeeded 1 | verified | Fresh PostgreSQL 16 + Redis 7 Slice 3.3 experiment |
 | Extraction | Deterministic source types | 2 (UTF-8 text, Markdown) | verified | `DEFAULT_EXTRACTOR_REGISTRY` and extraction tests |
 | Extraction | Provenance coverage invariant | 100% of normalized characters covered by contiguous spans | verified | `NormalizedDocument` validation and extraction tests |
 | Extraction | Durable artifact identity | 1 immutable metadata row per document-version/parser identity | verified | Database unique constraint and persistence tests |
+| Extraction | Active worker source types | 2 (UTF-8 text, Markdown) | verified | Concrete worker handler and Slice 3.3 smoke test |
 
 The current suite count includes the PostgreSQL integration test only when its
 environment variable is supplied. The normal local command skips that test.

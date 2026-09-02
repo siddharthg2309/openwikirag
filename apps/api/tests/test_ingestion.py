@@ -5,21 +5,26 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openwikirag.application.ingestion import (
     IngestionConsumerService,
+    IngestionHandler,
     PermanentJobError,
     RetryableJobError,
 )
+from openwikirag.application.normalized_artifacts import NormalizedArtifactIngestionHandler
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import (
     Base,
     Document,
     DocumentVersion,
     IngestionJob,
+    NormalizedDocumentArtifact,
     Tenant,
 )
+from openwikirag.infrastructure.storage import LocalObjectStorage, ObjectStorageError
 from openwikirag.infrastructure.streams import StreamMessage
 
 
@@ -111,8 +116,8 @@ class RecordingHandler:
         self.failure = failure
         self.calls: list[UUID] = []
 
-    async def handle(self, *, job_id: UUID, payload: dict[str, object]) -> None:
-        self.calls.append(job_id)
+    async def handle(self, *, job: IngestionJob, payload: dict[str, object]) -> None:
+        self.calls.append(job.id)
         if self.failure is not None:
             failure = self.failure
             self.failure = None
@@ -147,8 +152,14 @@ async def create_job(session: AsyncSession) -> tuple[Tenant, IngestionJob]:
     return tenant, job
 
 
-def make_message(tenant_id: UUID, job_id: UUID, *, message_id: str = "1-0") -> StreamMessage:
-    payload: dict[str, object] = {
+def make_message(
+    tenant_id: UUID,
+    job_id: UUID,
+    *,
+    message_id: str = "1-0",
+    payload: dict[str, object] | None = None,
+) -> StreamMessage:
+    event_payload = payload or {
         "document_id": str(uuid4()),
         "document_version_id": str(uuid4()),
         "ingestion_job_id": str(job_id),
@@ -160,7 +171,7 @@ def make_message(tenant_id: UUID, job_id: UUID, *, message_id: str = "1-0") -> S
             "event_type": "document.ingestion.requested",
             "tenant_id": str(tenant_id),
             "aggregate_id": str(job_id),
-            "payload": json.dumps(payload),
+            "payload": json.dumps(event_payload),
         },
     )
 
@@ -168,7 +179,7 @@ def make_message(tenant_id: UUID, job_id: UUID, *, message_id: str = "1-0") -> S
 def make_service(
     session: AsyncSession,
     transport: FakeTransport,
-    handler: RecordingHandler,
+    handler: IngestionHandler,
     *,
     lease_seconds: int = 60,
 ) -> IngestionConsumerService:
@@ -186,6 +197,42 @@ def make_service(
         batch_size=10,
         block_ms=1,
     )
+
+
+async def create_job_with_source(
+    session: AsyncSession,
+    storage: LocalObjectStorage,
+    *,
+    source_type: str,
+    data: bytes,
+) -> tuple[Tenant, IngestionJob]:
+    tenant = Tenant(name=f"Artifact Ingestion Tenant {uuid4().hex}")
+    session.add(tenant)
+    await session.flush()
+    document = Document(tenant_id=tenant.id, title="Artifact Source", source_type=source_type)
+    session.add(document)
+    await session.flush()
+    source_object_key = f"tenants/{tenant.id}/documents/{document.id}/source"
+    version = DocumentVersion(
+        tenant_id=tenant.id,
+        document_id=document.id,
+        version_number=1,
+        original_filename=f"source.{source_type}",
+        sanitized_filename=f"source.{source_type}",
+        source_type=source_type,
+        media_type="text/markdown" if source_type == "markdown" else "text/plain",
+        byte_size=len(data),
+        checksum_sha256="a" * 64,
+        source_object_key=source_object_key,
+    )
+    session.add(version)
+    await session.flush()
+    document.current_version_id = version.id
+    job = IngestionJob(tenant_id=tenant.id, document_version_id=version.id)
+    session.add(job)
+    await storage.put(object_key=source_object_key, data=data, content_type=version.media_type)
+    await session.commit()
+    return tenant, job
 
 
 async def test_success_commits_before_ack_and_terminal_duplicate_skips_handler(
@@ -321,3 +368,110 @@ async def test_exhausted_job_is_dead_lettered_and_acknowledged(session: AsyncSes
     assert refreshed.status == "dead_letter"
     assert transport.dead_letters[0][1] == "MAX_ATTEMPTS_EXCEEDED"
     assert transport.acknowledged == ["1-0"]
+
+
+async def test_claimed_job_owns_artifact_source_and_duplicate_delivery_recovers(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nBody\n",
+    )
+    job_id = job.id
+    tenant_id = tenant.id
+    malicious_payload: dict[str, object] = {
+        "document_id": str(uuid4()),
+        "document_version_id": str(uuid4()),
+        "ingestion_job_id": str(job_id),
+    }
+    handler = NormalizedArtifactIngestionHandler(session, storage)
+
+    # Simulate a crash after artifact persistence but before job completion.
+    await handler.handle(job=job, payload=malicious_payload)
+
+    transport = FakeTransport()
+    transport.new_messages.append(
+        make_message(tenant_id, job_id, payload=malicious_payload)
+    )
+    service = make_service(session, transport, handler)
+    assert await service.consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job_id)
+    assert refreshed is not None
+    assert refreshed.status == "succeeded"
+    assert transport.acknowledged == ["1-0"]
+    artifacts = list((await session.scalars(select(NormalizedDocumentArtifact))).all())
+    assert len(artifacts) == 1
+    assert artifacts[0].tenant_id == tenant_id
+    assert artifacts[0].document_version_id == refreshed.document_version_id
+
+
+async def test_unsupported_source_is_dead_lettered_after_claim(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="pdf",
+        data=b"%PDF-1.7",
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    service = make_service(
+        session,
+        transport,
+        NormalizedArtifactIngestionHandler(session, storage),
+    )
+
+    assert await service.consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "dead_letter"
+    assert refreshed.last_error_code == "INGESTION_PERMANENT_FAILURE"
+    assert transport.dead_letters[0][1] == "INGESTION_PERMANENT_FAILURE"
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_storage_failure_remains_retryable_and_unacknowledged(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    class FailingReadStorage:
+        async def get(self, *, object_key: str) -> bytes:
+            raise ObjectStorageError("source unavailable")
+
+        async def put(self, *, object_key: str, data: bytes, content_type: str) -> None:
+            raise AssertionError("put should not be called")
+
+        async def delete(self, *, object_key: str) -> None:
+            raise AssertionError("delete should not be called")
+
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="text",
+        data=b"Retry me\n",
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    service = make_service(
+        session,
+        transport,
+        NormalizedArtifactIngestionHandler(session, FailingReadStorage()),
+    )
+
+    assert await service.consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "retryable"
+    assert refreshed.last_error_code == "INGESTION_RETRYABLE_FAILURE"
+    assert transport.acknowledged == []

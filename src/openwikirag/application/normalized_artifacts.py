@@ -13,7 +13,8 @@ from openwikirag.application.extraction import (
     ExtractorRegistry,
     NormalizedDocument,
 )
-from openwikirag.infrastructure.models import NormalizedDocumentArtifact
+from openwikirag.application.ingestion import PermanentJobError, RetryableJobError
+from openwikirag.infrastructure.models import IngestionJob, NormalizedDocumentArtifact
 from openwikirag.infrastructure.repositories.normalized_artifacts import (
     NormalizedArtifactRepository,
 )
@@ -42,6 +43,31 @@ class NormalizedArtifactPersistenceError(NormalizedArtifactError):
     def __init__(self, *, cleanup_failed: bool) -> None:
         super().__init__("The normalized artifact metadata could not be recorded.")
         self.cleanup_failed = cleanup_failed
+
+
+class NormalizedArtifactIngestionHandler:
+    """Map claimed ingestion jobs to durable normalized-artifact persistence."""
+
+    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
+        self._artifacts = NormalizedArtifactService(session, storage)
+
+    async def handle(self, *, job: IngestionJob, payload: dict[str, object]) -> None:
+        """Persist the job's canonical source version, never a payload-selected one."""
+
+        del payload
+        try:
+            await self._artifacts.persist(
+                tenant_id=job.tenant_id,
+                document_version_id=job.document_version_id,
+            )
+        except (
+            DocumentVersionNotFoundError,
+            NormalizedArtifactConflictError,
+            ExtractionError,
+        ) as exc:
+            raise PermanentJobError("The document cannot produce a normalized artifact.") from exc
+        except (NormalizedArtifactStorageError, NormalizedArtifactPersistenceError) as exc:
+            raise RetryableJobError("The normalized artifact will be retried.") from exc
 
 
 @dataclass(frozen=True, slots=True)

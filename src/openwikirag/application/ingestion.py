@@ -23,9 +23,9 @@ from openwikirag.security.authorization import (
 
 
 class IngestionHandler(Protocol):
-    """Processing port; extraction is intentionally not implemented in this slice."""
+    """Process an already tenant-scoped, lease-claimed ingestion job."""
 
-    async def handle(self, *, job_id: UUID, payload: dict[str, object]) -> None:
+    async def handle(self, *, job: IngestionJob, payload: dict[str, object]) -> None:
         """Perform the next ingestion step for a claimed job."""
 
 
@@ -268,10 +268,11 @@ class IngestionConsumerService:
     ) -> None:
         assert claim.job is not None
         try:
-            await self._handler.handle(job_id=event.job_id, payload=event.payload)
+            await self._handler.handle(job=claim.job, payload=event.payload)
         except RetryableJobError:
+            job = await self._refresh_claimed_job(claim.job)
             await self._jobs.mark_retryable(
-                claim.job,
+                job,
                 error_code="INGESTION_RETRYABLE_FAILURE",
                 base_backoff_seconds=self._retry_backoff_base_seconds,
                 max_backoff_seconds=self._retry_backoff_max_seconds,
@@ -279,15 +280,17 @@ class IngestionConsumerService:
             await self._session.commit()
             return
         except PermanentJobError:
+            job = await self._refresh_claimed_job(claim.job)
             await self._jobs.mark_dead_letter(
-                claim.job,
+                job,
                 error_code="INGESTION_PERMANENT_FAILURE",
             )
             await self._dead_letter_then_ack(message, reason="INGESTION_PERMANENT_FAILURE")
             return
         except Exception:
+            job = await self._refresh_claimed_job(claim.job)
             await self._jobs.mark_retryable(
-                claim.job,
+                job,
                 error_code="INGESTION_UNEXPECTED_FAILURE",
                 base_backoff_seconds=self._retry_backoff_base_seconds,
                 max_backoff_seconds=self._retry_backoff_max_seconds,
@@ -295,9 +298,16 @@ class IngestionConsumerService:
             await self._session.commit()
             return
 
-        await self._jobs.mark_succeeded(claim.job)
+        job = await self._refresh_claimed_job(claim.job)
+        await self._jobs.mark_succeeded(job)
         await self._session.commit()
         await self._acknowledge(message)
+
+    async def _refresh_claimed_job(self, job: IngestionJob) -> IngestionJob:
+        """Reload job state after a handler may have closed its transaction."""
+
+        await self._session.refresh(job)
+        return job
 
     async def _dead_letter_job_then_ack(
         self,

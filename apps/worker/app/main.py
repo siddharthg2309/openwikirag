@@ -1,29 +1,22 @@
 import argparse
 import asyncio
 import signal
-from uuid import UUID
+from pathlib import Path
 
 import structlog
 
 from openwikirag import __version__
 from openwikirag.application.ingestion import (
     IngestionConsumerService,
-    PermanentJobError,
 )
+from openwikirag.application.normalized_artifacts import NormalizedArtifactIngestionHandler
 from openwikirag.application.outbox import OutboxPublisherService
 from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import get_settings
 from openwikirag.core.logging import configure_logging
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
+from openwikirag.infrastructure.storage import LocalObjectStorage
 from openwikirag.infrastructure.streams import RedisStreamPublisher
-
-
-class DeferredIngestionHandler:
-    """Prevent the worker from claiming extraction succeeded before Phase 3."""
-
-    async def handle(self, *, job_id: UUID, payload: dict[str, object]) -> None:
-        del job_id, payload
-        raise PermanentJobError("The extraction pipeline is not implemented yet.")
 
 
 async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = False) -> None:
@@ -33,6 +26,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
     engine = create_database_engine(settings.database_url)
     session_factory = create_session_factory(engine)
     transport = RedisStreamPublisher.from_url(settings.redis_url)
+    storage = LocalObjectStorage(Path(settings.object_store_root))
     try:
         async with session_factory() as session:
             outbox = OutboxPublisherService(
@@ -43,7 +37,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
             ingestion = IngestionConsumerService(
                 session,
                 transport,
-                DeferredIngestionHandler(),
+                NormalizedArtifactIngestionHandler(session, storage),
                 stream_name=settings.ingestion_stream_name,
                 group_name=settings.ingestion_consumer_group,
                 consumer_name=settings.ingestion_consumer_name,
