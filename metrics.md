@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 4, Slice 4.10 — Authorized WikiRAG regeneration.
+Current verified slice: Phase 5, Slice 5.1 — Deterministic hierarchical chunking.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 179 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 185 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -48,9 +48,10 @@ Current verified slice: Phase 4, Slice 4.10 — Authorized WikiRAG regeneration.
 | Automated tests | Focused WikiRAG worker-pipeline tests | 5 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_pipeline or wiki_output or wiki_provider or wiki_regeneration'` |
 | Automated tests | Focused WikiRAG regeneration API tests | 4 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py -k 'regeneration'` |
 | Automated tests | Focused WikiRAG regeneration worker tests | 3 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_regeneration or regeneration_event'` |
+| Automated tests | Focused hierarchical chunking tests | 6 passed | verified | `uv run pytest apps/worker/tests/test_chunking.py -q` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 70 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 74 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0008_scope_page_checksum` | verified | PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Migration drift | No new upgrade operations | verified | `uv run alembic check` |
@@ -98,6 +99,7 @@ Current verified slice: Phase 4, Slice 4.10 — Authorized WikiRAG regeneration.
 | WikiRAG | Page listing API | 1 authenticated metadata-only listing endpoint with bounded pagination, status filtering, stable ordering, and success auditing | verified | `GET /api/v1/wiki/pages` and 4 focused listing tests |
 | WikiRAG | Regeneration request API | 1 authenticated asynchronous regeneration endpoint using 1 durable job, 1 transactional-outbox event, and 1 success audit per request | verified | `POST /api/v1/wiki/pages/{artifact_id}/regenerate` and 4 focused API tests |
 | WikiRAG | Regenerated artifact versioning | 1 new configuration-identified generation/page pair per changed regeneration configuration; prior page bytes/review metadata preserved; duplicate delivery reuses artifacts | verified | `WikiRegenerationHandler` and 3 focused worker tests |
+| Chunking | Hierarchical chunk contract | 1 frozen chunk schema with 2 chunk kinds, 5 explicit budget/overlap controls, heading-aware parent grouping, exact offsets/page provenance, and stable SHA-256 ids | verified | `HierarchicalChunker` and 6 focused tests |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
@@ -301,6 +303,8 @@ versions rather than pretending to have scale results.
 - Activated the deterministic WikiRAG worker pipeline across **5 ordered stages** (normalization, metadata/page construction, structured generation, generation-artifact persistence, and page-artifact persistence) with **3 immutable artifact outputs**, a replaceable provider port, named progress steps, and permanent-versus-retryable failure mapping; verified with **4 focused pipeline tests**, **172 local tests**, and duplicate replay reuse. Live LLM orchestration, provider-specific retries, regeneration, and document-table RLS remain deferred.
 
 - Added **1 authenticated asynchronous WikiRAG regeneration endpoint** for editor/admin roles, backed by **1 durable job**, **1 transactional-outbox event**, and **1 success audit** per request; worker routing validates the source page's tenant/version lineage and creates a new configuration-identified draft artifact while preserving the prior page bytes and review status; verified with **4 API tests**, **3 worker tests**, **179 local tests**, and duplicate delivery reuse. Live provider/model selection, request-key deduplication, and PostgreSQL/Redis regeneration smoke remain deferred.
+
+- Added a deterministic hierarchical chunking boundary with **2 chunk kinds** (parent and child), **5 explicit budget/overlap controls**, top-level heading grouping, bounded child overlap, exact normalized offsets, page-range provenance, and stable SHA-256 ids; verified with **6 focused chunking tests** and **185 local tests**. Model-specific tokenizers, chunk persistence, embeddings, Qdrant, retrieval, and reranking remain deferred.
 
 ### Future measured bullets
 

@@ -93,6 +93,13 @@ history, or model-quality claim is active yet. A metadata-only listing endpoint
 supports bounded pagination and review-status filtering without loading
 object-storage payloads.
 
+Phase 5 now has a deterministic hierarchical chunking boundary. A validated
+normalized document is grouped by top-level heading into bounded parent
+windows and smaller overlapping child windows, each carrying exact normalized
+offsets, section path, page range, checksums, and stable ids. This is a pure
+pre-embedding contract; persistence, model-specific tokenization, embeddings,
+Qdrant, retrieval, and reranking remain later slices.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the
