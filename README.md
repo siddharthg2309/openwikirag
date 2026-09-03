@@ -127,6 +127,14 @@ cancels unfinished work on failure or caller cancellation. Provider-native
 batching, retries, model caching, persistence, and Qdrant projection remain
 separate concerns.
 
+Phase 5.6 adds a bounded in-process model/provider cache. Dense and sparse
+representation, provider, model, and configuration identity form the cache key;
+concurrent misses use single-flight loading, least-recently-used eviction
+closes old instances, failed loads are not retained, and shutdown cancels or
+closes resources. This caches loaded instances rather than embedding results;
+distributed caching, TTL/invalidation, and Qdrant projection remain later
+concerns.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the
