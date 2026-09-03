@@ -59,6 +59,7 @@ async def _request(
     tenant_id: UUID = TENANT_ID,
     document_version_id: UUID = VERSION_ID,
     text: str = "JWT refresh tokens rotate after authentication.",
+    collection: VectorCollectionConfig | None = None,
 ) -> VectorPointRequest:
     chunk = _chunk(text)
     dense_config = EmbeddingConfig(model_identity="dense-test-v1", dimensions=8)
@@ -87,7 +88,8 @@ async def _request(
             language="en",
         ),
         pipeline_version="ingestion-v1",
-        collection=VectorCollectionConfig(dense_dimensions=8, sparse_index_space_size=32),
+        collection=collection
+        or VectorCollectionConfig(dense_dimensions=8, sparse_index_space_size=32),
         dense=dense,
         sparse=sparse,
     )

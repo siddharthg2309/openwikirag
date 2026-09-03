@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     object_store_root: str = Field(default=".data/objects", min_length=1)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1, le=250 * 1024 * 1024)
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
+    qdrant_url: str = Field(default="http://127.0.0.1:6333", min_length=1)
+    qdrant_api_key: str | None = None
     ingestion_stream_name: str = Field(default="openwikirag:ingestion", min_length=1)
     outbox_batch_size: int = Field(default=100, ge=1, le=1000)
     ingestion_consumer_group: str = Field(default="openwikirag-ingestion", min_length=1)

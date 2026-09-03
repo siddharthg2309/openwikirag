@@ -22,7 +22,9 @@ VECTOR_POINT_SCHEMA_VERSION: Literal["vector-point-v1"] = "vector-point-v1"
 VectorUpsertStatus = Literal["created", "reused"]
 
 _CHECKSUM_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-_POINT_ID_PATTERN = re.compile(r"^point-[0-9a-f]{64}$")
+_POINT_ID_PATTERN = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 _COLLECTION_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$")
 
 
@@ -133,6 +135,9 @@ class VectorPointPayload(BaseModel):
     source_artifact_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     content_checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     collection_config_checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    dense_dimensions: int = Field(gt=0)
+    sparse_index_space_size: int = Field(gt=0)
+    sparse_token_count: int = Field(gt=0)
     dense_provider_identity: str = Field(min_length=1, max_length=255)
     dense_model_identity: str = Field(min_length=1, max_length=255)
     dense_config_checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
@@ -167,7 +172,9 @@ class VectorPoint(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal["vector-point-v1"] = VECTOR_POINT_SCHEMA_VERSION
-    point_id: str = Field(pattern=r"^point-[0-9a-f]{64}$")
+    point_id: str = Field(
+        pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    )
     collection_config_checksum_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     dense: DenseEmbedding
     sparse: SparseEmbedding
@@ -221,6 +228,12 @@ class VectorPoint(BaseModel):
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
+
+    @property
+    def checksum_sha256(self) -> str:
+        """Return the checksum used by a remote adapter for read-before-write."""
+
+        return hashlib.sha256(self.canonical_bytes()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +306,9 @@ class VectorPointRequest:
             source_artifact_checksum=self.chunk.source_artifact_checksum,
             content_checksum_sha256=self.chunk.content_checksum_sha256,
             collection_config_checksum_sha256=collection_checksum,
+            dense_dimensions=self.dense.dimensions,
+            sparse_index_space_size=self.sparse.index_space_size,
+            sparse_token_count=self.sparse.token_count,
             dense_provider_identity=self.dense.provider_identity,
             dense_model_identity=self.dense.model_identity,
             dense_config_checksum_sha256=self.dense.config_checksum_sha256,
@@ -421,7 +437,7 @@ def _point_id(
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return f"point-{hashlib.sha256(canonical).hexdigest()}"
+    return str(UUID(bytes=hashlib.sha256(canonical).digest()[:16], version=5))
 
 
 __all__ = [

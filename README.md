@@ -142,8 +142,13 @@ model/configuration provenance; raw chunk text remains in canonical artifacts.
 Deterministic point identity and canonical-byte comparison make retries create,
 reuse, or fail with an immutable conflict, while tenant filters and
 tenant-scoped reads fail closed. The application has no Qdrant SDK dependency;
-live Qdrant collection provisioning, payload indexes, upserts, and search remain
-later slices.
+Phase 5.8 activates the live projection adapter with pinned `qdrant-client`
+1.14.3 against the local Qdrant 1.14.1 service. It provisions one named dense
+cosine vector and one named sparse vector, creates and validates 10 indexed
+tenant/document/provenance payload fields, uses deterministic UUID point ids,
+and supports tenant-scoped create/reuse/read behavior with validated
+round-trips. Live search, hybrid score fusion, worker activation, and retrieval
+quality measurements remain later slices.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled

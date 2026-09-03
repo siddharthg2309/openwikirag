@@ -23,11 +23,12 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 5, Slice 5.7 — Tenant-scoped vector projection contract.
+Current verified slice: Phase 5, Slice 5.8 — Live Qdrant projection adapter.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 240 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 246 passed, 4 skipped | verified | `uv run pytest` |
+| Automated tests | Qdrant-enabled full suite | 247 passed, 3 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -55,9 +56,10 @@ Current verified slice: Phase 5, Slice 5.7 — Tenant-scoped vector projection c
 | Automated tests | Focused embedding-batch orchestration tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_embedding_batch.py -q` |
 | Automated tests | Focused model-cache lifecycle tests | 10 passed | verified | `uv run pytest apps/worker/tests/test_model_cache.py -q` |
 | Automated tests | Focused vector-index projection tests | 9 passed | verified | `uv run pytest apps/worker/tests/test_vector_index.py -q` |
+| Automated tests | Focused live Qdrant adapter tests | 7 passed against Qdrant 1.14.1 | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest apps/worker/tests/test_qdrant.py -q` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 87 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 89 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0008_scope_page_checksum` | verified | PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Chunk-manifest migration | `0009_chunk_manifests` present in source; PostgreSQL application unverified | implemented | `migrations/versions/0009_chunk_manifests.py` |
@@ -112,7 +114,9 @@ Current verified slice: Phase 5, Slice 5.7 — Tenant-scoped vector projection c
 | Embeddings | Sparse lexical contract | 1 provider port, 1 frozen request, 1 frozen result schema, bounded hashed indices, positive sublinear term-frequency weights, sorted unique geometry, and exact input/provider/model/configuration identity | verified | `DeterministicHashSparseEmbeddingProvider` and 9 focused tests; corpus IDF, fusion, semantic quality, and Qdrant projection deferred |
 | Embeddings | Bounded batch orchestration | 1 generic provider port, 1 frozen limit configuration, 2 boundedness controls (batch size/concurrency), streaming input consumption, stable output ordering, indexed typed failures, and cancellation cleanup | verified | `EmbeddingBatcher` and 8 focused tests; provider-native batching, retries, cache, and Qdrant projection deferred |
 | Embeddings | In-process model/provider cache | 1 frozen cache key with 4 identity dimensions, 1 frozen capacity configuration, bounded LRU storage, single-flight loading, failed-load suppression, eviction/shutdown cleanup, and cancellation isolation | verified | `EmbeddingModelCache` and 10 focused tests; result caching, distributed cache, TTL/invalidation, and Qdrant projection deferred |
-| Vector indexing | Tenant-scoped hybrid projection contract | 1 provider-neutral index port, 1 immutable point schema, 1 collection-geometry identity, 2 named vectors (dense/sparse), 1 explicit tenant filter, and create/reuse/conflict upsert semantics | verified | `VectorPointRequest`, `VectorPoint`, `TenantVectorFilter`, `InMemoryVectorIndex`, and 9 focused tests; live Qdrant adapter, payload indexes, search, and performance deferred |
+| Vector indexing | Tenant-scoped hybrid projection contract | 1 provider-neutral index port, 1 immutable point schema, 1 collection-geometry identity, 2 named vectors (dense/sparse), 1 explicit tenant filter, and create/reuse/conflict upsert semantics | verified | `VectorPointRequest`, `VectorPoint`, `TenantVectorFilter`, `InMemoryVectorIndex`, and 9 focused tests |
+| Vector indexing | Live Qdrant projection schema | 1 pinned client (`qdrant-client` 1.14.3), 1 named dense cosine vector, 1 named sparse vector, 10 typed payload indexes, and deterministic UUID point ids | verified | `QdrantVectorIndex`, Qdrant 1.14.1 integration, and 7 focused real-service tests |
+| Vector indexing | Live Qdrant tenant-safe point lifecycle | Create/reuse/immutable-conflict behavior, validated vector/payload round-trip, and 1 foreign-tenant negative read path | verified | Qdrant-enabled full suite: 247 passed, 3 skipped |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
@@ -329,7 +333,9 @@ versions rather than pretending to have scale results.
 
 - Added **1 bounded in-process model/provider cache** with **4 identity dimensions** (representation, provider, model, configuration), single-flight concurrent loading, LRU eviction, async resource cleanup, failed-load suppression, shutdown cancellation, and waiter-cancellation isolation; verified with **10 focused tests** and **231 local tests**. This is loaded-instance caching only; result caching, distributed cache, TTL/invalidation, retries, persistence, Qdrant projection, and cache performance measurements remain deferred.
 
-- Defined **1 provider-neutral tenant-scoped hybrid vector-index port** with **1 immutable point schema**, **2 named vectors** (dense and sparse), **1 collection geometry identity**, **1 explicit tenant payload filter**, provenance-only payloads, deterministic point ids, and create/reuse/immutable-conflict upsert behavior; verified with **9 focused tests** and **240 local tests**. No live Qdrant SDK or network call is active; collection provisioning, payload indexes, search, retries, and performance measurements remain deferred.
+- Defined **1 provider-neutral tenant-scoped hybrid vector-index port** with **1 immutable point schema**, **2 named vectors** (dense and sparse), **1 collection geometry identity**, **1 explicit tenant payload filter**, provenance-only payloads, deterministic point ids, and create/reuse/immutable-conflict upsert behavior; verified with **9 focused tests** and **240 local tests**.
+
+- Activated **1 asynchronous live Qdrant projection adapter** using **qdrant-client 1.14.3** against Qdrant 1.14.1, with **1 named dense cosine vector**, **1 named sparse vector**, **10 typed payload indexes**, deterministic UUID point ids, schema conflict detection, validated round-trips, same-checksum reuse, immutable conflicts, and foreign-tenant isolation; verified with **7 focused real-service tests** and **247 Qdrant-enabled full-suite tests**. Live search, worker activation, fusion, retrieval quality, and performance measurements remain deferred.
 
 ### Future measured bullets
 
