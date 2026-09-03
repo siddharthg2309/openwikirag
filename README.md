@@ -66,6 +66,11 @@ preserves paragraph spans and heading paths. PDF artifacts also record
 deterministic page-coverage quality metadata and an OCR handoff signal; OCR is
 disabled by default.
 
+Phase 4 currently includes a deterministic metadata contract over normalized
+artifacts for title, language, headings, dates, and authors. Its evidence
+ranges point back to normalized text; LLM-generated WikiRAG pages, metadata
+persistence, and human review are later slices.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the

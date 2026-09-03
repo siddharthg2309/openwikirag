@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 3, Slice 3.8 — Activate deterministic DOCX extraction.
+Current verified slice: Phase 4, Slice 4.1 — Deterministic metadata extraction contract.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 111 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 117 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -35,12 +35,13 @@ Current verified slice: Phase 3, Slice 3.8 — Activate deterministic DOCX extra
 | Automated tests | Focused job-progress API tests | 8 passed | verified | `uv run pytest apps/api/tests/test_jobs.py` |
 | Automated tests | Focused worker lifecycle tests | 4 passed | verified | `uv run pytest apps/worker/tests/test_worker.py` |
 | Automated tests | Focused extraction/provenance/quality/OCR-merge/DOCX tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
+| Automated tests | Focused deterministic metadata tests | 6 passed | verified | `uv run pytest apps/worker/tests/test_metadata.py` |
 | Automated tests | Focused OCR-boundary tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_ocr.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
 | Automated tests | Focused artifact-activation regression tests | 25 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 56 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 58 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0005_normalized_artifacts` | verified | Fresh PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Migration drift | No new upgrade operations | verified | `uv run alembic check` |
@@ -70,6 +71,10 @@ Current verified slice: Phase 3, Slice 3.8 — Activate deterministic DOCX extra
 | Extraction | Durable artifact identity | 1 immutable metadata row per document-version/parser identity | verified | Database unique constraint and persistence tests |
 | Extraction | Active worker source types | 4 (UTF-8 text, Markdown, text-bearing digital PDF, DOCX) | verified | Concrete worker handler, composition tests, and artifact-consumer tests |
 | Extraction | DOCX parser contract | 1 bounded standard-library OOXML parser with paragraph, heading, tab, break, and deleted-text semantics | verified | `apps/worker/tests/test_extraction.py`; no external parser dependency |
+| Metadata | Deterministic metadata fields | 5 (`title`, `language`, `headings`, `dates`, `authors`) | verified | `DeterministicMetadataExtractor` and focused metadata tests |
+| Metadata | Evidence-backed metadata collections | 3 (`headings`, `dates`, `authors`) plus inferred-title evidence | verified | Metadata models and normalized-range assertions |
+| Metadata | Conservative language labels | 2 (`en`, `und`) | verified | Transparent marker heuristic; broad language detection is deferred |
+| Metadata | Supported date formats | 2 (ISO and month-name dates) | verified | Valid-date normalization tests; ambiguous numeric dates are omitted |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
 | Extraction | OCR-enriched merge proof | 1 mixed three-page fixture; only the missing page was OCR-routed and recovered | verified | Fake OCR extraction and consumer tests |
@@ -248,6 +253,8 @@ versions rather than pretending to have scale results.
 - Activated opt-in PDF OCR for pages without usable digital text, preserving digital/OCR provenance and immutable `pypdf-ocr` artifact identity; verified with **6 new fake-provider extraction, consumer, and composition tests**. Native Tesseract execution remains unverified.
 
 - Activated deterministic DOCX ingestion with a bounded standard-library OOXML parser, paragraph/run extraction, heading-derived section paths, tab/break preservation, deleted-text exclusion, and permanent malformed/oversized failure handling; verified with **4 focused parser tests**, **1 consumer persistence test**, and **111 local tests** overall. No external dependency or migration was added.
+
+- Established a deterministic metadata contract for **5 fields** with frozen Pydantic schemas, title precedence, conservative `en`/`und` classification, valid ISO/month-name date normalization, labeled author splitting, normalized-text evidence ranges, and canonical checksums; verified with **6 focused metadata tests** and **117 local tests**. LLM generation and metadata persistence remain later slices.
 
 ### Future measured bullets
 
