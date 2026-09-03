@@ -266,6 +266,67 @@ class NormalizedDocumentArtifact(Base):
     )
 
 
+class WikiGenerationArtifact(Base):
+    """Immutable metadata index for one validated generated WikiRAG payload."""
+
+    __tablename__ = "wiki_generation_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_version_id",
+            "normalized_artifact_id",
+            "base_page_checksum",
+            "generation_version",
+            "prompt_checksum",
+            "config_hash",
+            "provider_identity",
+            name="uq_wiki_generation_artifact_identity",
+        ),
+        UniqueConstraint(
+            "result_checksum_sha256",
+            name="uq_wiki_generation_artifact_result_checksum",
+        ),
+        UniqueConstraint(
+            "artifact_object_key",
+            name="uq_wiki_generation_artifact_object_key",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_version_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    normalized_artifact_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("normalized_document_artifacts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    base_page_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_artifact_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    metadata_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    config_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    generation_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    review_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="draft", server_default=text("'draft'")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class IngestionJob(Base):
     """Durable pending work record; delivery and lease handling come later."""
 

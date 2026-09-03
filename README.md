@@ -71,8 +71,10 @@ artifacts for title, language, headings, dates, and authors, plus a typed
 WikiRAG page skeleton with stable section ids. A provider-neutral structured
 generation boundary now accepts only schema-valid summaries, definitions, and
 references whose evidence matches normalized source spans. The document is
-packaged as untrusted JSON data for the future provider; no real LLM call,
-generated-page persistence, or human review is active yet.
+packaged as untrusted JSON data for the future provider, and validated
+generation results can now be persisted as immutable JSON objects with
+tenant/version/checksum metadata in PostgreSQL. No real LLM call, worker
+activation, or human review workflow is active yet.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
