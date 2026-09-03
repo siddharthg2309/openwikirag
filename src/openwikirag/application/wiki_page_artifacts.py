@@ -4,6 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Literal, Self
 from uuid import UUID
 
@@ -57,7 +58,42 @@ class WikiPageArtifactPersistenceError(WikiPageArtifactError):
         self.cleanup_failed = cleanup_failed
 
 
+class WikiPageReviewError(WikiPageArtifactError):
+    """Base error for review-state transition failures."""
+
+
+class WikiPageReviewTransitionError(WikiPageReviewError):
+    """Raised when a requested review status transition is not allowed."""
+
+
+class WikiPageReviewConflictError(WikiPageReviewError):
+    """Raised when another writer changed the status before this update."""
+
+
+class WikiPageReviewIntegrityError(WikiPageReviewError):
+    """Raised when persisted review metadata contains an unknown status."""
+
+
 WIKI_PAGE_ARTIFACT_SCHEMA_VERSION: Literal["wiki-generated-page-v1"] = "wiki-generated-page-v1"
+
+
+class WikiPageReviewStatus(StrEnum):
+    """Review states supported by the page-artifact workflow."""
+
+    DRAFT = "draft"
+    NEEDS_REVIEW = "needs_review"
+    APPROVED = "approved"
+
+
+_ALLOWED_REVIEW_TRANSITIONS: dict[
+    WikiPageReviewStatus, frozenset[WikiPageReviewStatus]
+] = {
+    WikiPageReviewStatus.DRAFT: frozenset({WikiPageReviewStatus.NEEDS_REVIEW}),
+    WikiPageReviewStatus.NEEDS_REVIEW: frozenset(
+        {WikiPageReviewStatus.DRAFT, WikiPageReviewStatus.APPROVED}
+    ),
+    WikiPageReviewStatus.APPROVED: frozenset({WikiPageReviewStatus.NEEDS_REVIEW}),
+}
 
 
 class WikiGeneratedPage(BaseModel):
@@ -135,6 +171,17 @@ class ReadWikiPageArtifact:
     review_status: str
     created_at: datetime
     package: WikiGeneratedPage
+
+
+@dataclass(frozen=True, slots=True)
+class WikiPageReviewResult:
+    """Outcome of one authorized review-status request."""
+
+    artifact_id: UUID
+    tenant_id: UUID
+    previous_status: str
+    review_status: str
+    changed: bool
 
 
 class WikiPageArtifactService:
@@ -373,6 +420,76 @@ class WikiPageArtifactReadService:
             review_status=artifact.review_status,
             created_at=artifact.created_at,
             package=package,
+        )
+
+
+class WikiPageArtifactReviewService:
+    """Transition mutable review metadata without changing immutable page bytes."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._artifacts = WikiPageArtifactRepository(session)
+        self._authorization = AuthorizationService()
+
+    async def transition(
+        self,
+        *,
+        principal: Principal,
+        artifact_id: UUID,
+        target_status: WikiPageReviewStatus,
+    ) -> WikiPageReviewResult | None:
+        """Apply one tenant-scoped, compare-and-set review transition."""
+
+        self._authorization.require(principal, Permission.REVIEW_WIKI_PAGES)
+        tenant_id = UUID(principal.tenant_id)
+        artifact = await self._artifacts.get_by_id(
+            tenant_id=tenant_id,
+            artifact_id=artifact_id,
+        )
+        if artifact is None:
+            return None
+
+        try:
+            current_status = WikiPageReviewStatus(artifact.review_status)
+            target_status = WikiPageReviewStatus(target_status)
+        except (TypeError, ValueError) as exc:
+            await self._session.rollback()
+            raise WikiPageReviewIntegrityError(
+                "The page artifact contains an unsupported review status."
+            ) from exc
+
+        if target_status is current_status:
+            return WikiPageReviewResult(
+                artifact_id=artifact.id,
+                tenant_id=artifact.tenant_id,
+                previous_status=current_status.value,
+                review_status=current_status.value,
+                changed=False,
+            )
+        if target_status not in _ALLOWED_REVIEW_TRANSITIONS[current_status]:
+            await self._session.rollback()
+            raise WikiPageReviewTransitionError(
+                f"Cannot transition a page from '{current_status.value}' "
+                f"to '{target_status.value}'."
+            )
+
+        updated = await self._artifacts.compare_and_set_review_status(
+            tenant_id=tenant_id,
+            artifact_id=artifact.id,
+            expected_status=current_status.value,
+            new_status=target_status.value,
+        )
+        if not updated:
+            await self._session.rollback()
+            raise WikiPageReviewConflictError(
+                "The page review status changed before this request committed."
+            )
+        return WikiPageReviewResult(
+            artifact_id=artifact.id,
+            tenant_id=artifact.tenant_id,
+            previous_status=current_status.value,
+            review_status=target_status.value,
+            changed=True,
         )
 
 def _generation_lineage_matches(

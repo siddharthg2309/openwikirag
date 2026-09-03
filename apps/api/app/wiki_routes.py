@@ -1,4 +1,4 @@
-"""HTTP contract for tenant-scoped WikiRAG page reads."""
+"""HTTP contracts for tenant-scoped WikiRAG pages and review actions."""
 
 from datetime import datetime
 from typing import Annotated
@@ -14,7 +14,13 @@ from openwikirag.application.wiki_page_artifacts import (
     ReadWikiPageArtifact,
     WikiPageArtifactIntegrityError,
     WikiPageArtifactReadService,
+    WikiPageArtifactReviewService,
     WikiPageArtifactStorageError,
+    WikiPageReviewConflictError,
+    WikiPageReviewIntegrityError,
+    WikiPageReviewResult,
+    WikiPageReviewStatus,
+    WikiPageReviewTransitionError,
 )
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.infrastructure.storage import ObjectStorage
@@ -42,6 +48,22 @@ class WikiPageArtifactResponse(BaseModel):
     generation: WikiGenerationResult
 
 
+class WikiPageReviewRequest(BaseModel):
+    """Requested target for the page's mutable review workflow state."""
+
+    status: WikiPageReviewStatus
+
+
+class WikiPageReviewResponse(BaseModel):
+    """Audited result of one page review-status request."""
+
+    artifact_id: UUID
+    tenant_id: UUID
+    previous_status: str
+    review_status: str
+    changed: bool
+
+
 def _service(
     session: Annotated[AsyncSession, Depends(get_session)],
     storage: Annotated[ObjectStorage, Depends(get_object_storage)],
@@ -63,6 +85,22 @@ def _response(page_artifact: ReadWikiPageArtifact) -> WikiPageArtifactResponse:
         created_at=page_artifact.created_at,
         page=page_artifact.package.page,
         generation=page_artifact.package.generation,
+    )
+
+
+def _review_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> WikiPageArtifactReviewService:
+    return WikiPageArtifactReviewService(session)
+
+
+def _review_response(result: WikiPageReviewResult) -> WikiPageReviewResponse:
+    return WikiPageReviewResponse(
+        artifact_id=result.artifact_id,
+        tenant_id=result.tenant_id,
+        previous_status=result.previous_status,
+        review_status=result.review_status,
+        changed=result.changed,
     )
 
 
@@ -122,3 +160,73 @@ async def get_wiki_page(
         ) from exc
 
     return _response(page_artifact)
+
+
+@router.post("/pages/{artifact_id}/review", response_model=WikiPageReviewResponse)
+async def review_wiki_page(
+    artifact_id: UUID,
+    body: WikiPageReviewRequest,
+    request: Request,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    service: Annotated[WikiPageArtifactReviewService, Depends(_review_service)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> WikiPageReviewResponse:
+    """Change review metadata while preserving the immutable page package."""
+
+    try:
+        result = await service.transition(
+            principal=principal,
+            artifact_id=artifact_id,
+            target_status=body.status,
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The identity is not authorized to review WikiRAG pages.",
+        ) from exc
+    except WikiPageReviewTransitionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The requested WikiRAG page review transition is not allowed.",
+        ) from exc
+    except WikiPageReviewConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The WikiRAG page review status changed; reload and retry.",
+        ) from exc
+    except WikiPageReviewIntegrityError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The WikiRAG page review status failed integrity validation.",
+        ) from exc
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The requested WikiRAG page was not found.",
+        )
+
+    try:
+        await AuditRepository(session).record(
+            action="wiki.page.review",
+            resource_type="wiki_page_artifact",
+            resource_id=str(result.artifact_id),
+            tenant_id=UUID(principal.tenant_id),
+            actor_user_id=UUID(principal.subject_id),
+            request_id=request.headers.get("X-Request-ID"),
+            outcome="success",
+            metadata={
+                "from_status": result.previous_status,
+                "to_status": result.review_status,
+                "changed": result.changed,
+            },
+        )
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The WikiRAG page review could not be audited.",
+        ) from exc
+
+    return _review_response(result)

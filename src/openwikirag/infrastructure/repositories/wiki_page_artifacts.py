@@ -1,9 +1,10 @@
 """Tenant-scoped persistence primitives for self-contained WikiRAG pages."""
 
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import WikiGenerationArtifact, WikiPageArtifact
@@ -108,3 +109,27 @@ class WikiPageArtifactRepository:
         self._session.add(artifact)
         await self._session.flush()
         return artifact
+
+    async def compare_and_set_review_status(
+        self,
+        *,
+        tenant_id: UUID,
+        artifact_id: UUID,
+        expected_status: str,
+        new_status: str,
+    ) -> bool:
+        """Update review metadata only when the caller's state is still current."""
+
+        result = cast(
+            CursorResult[Any],
+            await self._session.execute(
+                update(WikiPageArtifact)
+                .where(
+                    WikiPageArtifact.id == artifact_id,
+                    WikiPageArtifact.tenant_id == tenant_id,
+                    WikiPageArtifact.review_status == expected_status,
+                )
+                .values(review_status=new_status)
+            ),
+        )
+        return result.rowcount == 1

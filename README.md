@@ -78,8 +78,10 @@ now packages the complete deterministic skeleton together with the validated
 generated fields, so a future reader or reviewer can load one self-contained
 page object without reconstructing the skeleton. Authenticated tenant members
 can now read that page through an integrity-checked API path with success
-auditing. No real LLM call, worker
-activation, or human review workflow is active yet.
+auditing. Authorized editors/admins can also move its mutable review metadata
+through `draft`, `needs_review`, and `approved` with compare-and-set protection
+and audit evidence, while the page object remains immutable. No real LLM call,
+worker activation, review history, or regeneration workflow is active yet.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled

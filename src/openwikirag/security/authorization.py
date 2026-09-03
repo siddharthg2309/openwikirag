@@ -15,6 +15,7 @@ class Permission(StrEnum):
     """Actions that application use cases can authorize."""
 
     READ_DOCUMENTS = "documents:read"
+    REVIEW_WIKI_PAGES = "wiki:review"
     WRITE_DOCUMENTS = "documents:write"
     DELETE_DOCUMENTS = "documents:delete"
     REINDEX_DOCUMENTS = "documents:reindex"
@@ -27,6 +28,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.EDITOR: frozenset(
         {
             Permission.READ_DOCUMENTS,
+            Permission.REVIEW_WIKI_PAGES,
             Permission.WRITE_DOCUMENTS,
             Permission.REINDEX_DOCUMENTS,
         }
@@ -34,6 +36,7 @@ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
     Role.ADMIN: frozenset(
         {
             Permission.READ_DOCUMENTS,
+            Permission.REVIEW_WIKI_PAGES,
             Permission.WRITE_DOCUMENTS,
             Permission.DELETE_DOCUMENTS,
             Permission.REINDEX_DOCUMENTS,

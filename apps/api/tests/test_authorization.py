@@ -35,6 +35,7 @@ def test_editor_can_reindex_but_cannot_manage_members() -> None:
     editor = principal(Role.EDITOR)
 
     AUTHZ.require(editor, Permission.REINDEX_DOCUMENTS, resource_tenant_id="tenant-a")
+    AUTHZ.require(editor, Permission.REVIEW_WIKI_PAGES, resource_tenant_id="tenant-a")
 
     with pytest.raises(PermissionDeniedError):
         AUTHZ.require(editor, Permission.MANAGE_MEMBERS, resource_tenant_id="tenant-a")
@@ -45,6 +46,7 @@ def test_admin_can_manage_members_and_delete_documents() -> None:
 
     AUTHZ.require(admin, Permission.MANAGE_MEMBERS, resource_tenant_id="tenant-a")
     AUTHZ.require(admin, Permission.DELETE_DOCUMENTS, resource_tenant_id="tenant-a")
+    AUTHZ.require(admin, Permission.REVIEW_WIKI_PAGES, resource_tenant_id="tenant-a")
 
 
 def test_non_operator_cannot_cross_tenant_boundary() -> None:

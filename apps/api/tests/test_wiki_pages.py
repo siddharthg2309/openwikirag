@@ -1,4 +1,4 @@
-"""API proof for authenticated, tenant-scoped WikiRAG page reads."""
+"""API proof for authenticated WikiRAG page reads and review actions."""
 
 import hashlib
 import json
@@ -38,6 +38,9 @@ from openwikirag.infrastructure.models import (
     WikiPageArtifact,
 )
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
+from openwikirag.infrastructure.repositories.wiki_page_artifacts import (
+    WikiPageArtifactRepository,
+)
 from openwikirag.infrastructure.storage import LocalObjectStorage, ObjectStorageError
 from openwikirag.security.authorization import Role
 
@@ -75,6 +78,7 @@ class WikiPageApiContext:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         subject: str,
+        editor_subject: str,
         tenant_id: UUID,
         page_artifact_id: UUID,
         foreign_page_artifact_id: UUID,
@@ -83,6 +87,7 @@ class WikiPageApiContext:
     ) -> None:
         self.session_factory = session_factory
         self.subject = subject
+        self.editor_subject = editor_subject
         self.tenant_id = tenant_id
         self.page_artifact_id = page_artifact_id
         self.foreign_page_artifact_id = foreign_page_artifact_id
@@ -102,6 +107,7 @@ async def wiki_page_api_context(tmp_path: Path) -> AsyncIterator[WikiPageApiCont
     root = tmp_path / "objects"
     storage = LocalObjectStorage(root)
     subject = f"oidc|wiki-page-reader-{uuid4().hex}"
+    editor_subject = f"oidc|wiki-page-editor-{uuid4().hex}"
     async with session_factory() as session:
         repository = IdentityRepository(session)
         tenant = await repository.create_tenant("Wiki Page Tenant")
@@ -111,6 +117,11 @@ async def wiki_page_api_context(tmp_path: Path) -> AsyncIterator[WikiPageApiCont
             auth_provider_subject=subject,
         )
         await repository.add_membership(tenant.id, user.id, Role.VIEWER)
+        editor_user = await repository.create_user(
+            f"wiki-editor-{uuid4().hex}@example.com",
+            auth_provider_subject=editor_subject,
+        )
+        await repository.add_membership(tenant.id, editor_user.id, Role.EDITOR)
         document = Document(
             tenant_id=tenant.id,
             title="Wiki Page Source",
@@ -190,6 +201,7 @@ async def wiki_page_api_context(tmp_path: Path) -> AsyncIterator[WikiPageApiCont
     yield WikiPageApiContext(
         session_factory,
         subject,
+        editor_subject,
         tenant.id,
         persisted_page.artifact_id,
         foreign_page.id,
@@ -226,6 +238,23 @@ async def get_page(
         headers["Authorization"] = f"Bearer {token}"
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.get(f"/api/v1/wiki/pages/{artifact_id}", headers=headers)
+
+
+async def review_page(
+    context: WikiPageApiContext,
+    artifact_id: UUID,
+    target_status: str,
+    *,
+    token: str,
+) -> Response:
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {token}"}
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.post(
+            f"/api/v1/wiki/pages/{artifact_id}/review",
+            headers=headers,
+            json={"status": target_status},
+        )
 
 
 async def test_viewer_reads_complete_page_and_audits_success(
@@ -382,3 +411,230 @@ async def test_storage_failure_does_not_create_success_audit(
         app.dependency_overrides[get_object_storage] = lambda: wiki_page_api_context.storage
 
     assert response.status_code == 503
+
+
+async def test_editor_can_transition_page_and_preserve_immutable_object(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    token = make_token(
+        wiki_page_api_context.editor_subject,
+        wiki_page_api_context.tenant_id,
+    )
+    async with wiki_page_api_context.session_factory() as session:
+        artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
+        assert artifact is not None
+        object_bytes = await wiki_page_api_context.storage.get(
+            object_key=artifact.artifact_object_key
+        )
+
+    response = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        "needs_review",
+        token=token,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["previous_status"] == "draft"
+    assert response.json()["review_status"] == "needs_review"
+    assert response.json()["changed"] is True
+    async with wiki_page_api_context.session_factory() as session:
+        artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
+        assert artifact is not None
+        assert artifact.review_status == "needs_review"
+        audit = await session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "wiki.page.review",
+                AuditEvent.resource_id == str(wiki_page_api_context.page_artifact_id),
+            )
+        )
+    assert audit is not None
+    assert audit.metadata_json == {
+        "from_status": "draft",
+        "to_status": "needs_review",
+        "changed": True,
+    }
+    assert (
+        await wiki_page_api_context.storage.get(object_key=artifact.artifact_object_key)
+        == object_bytes
+    )
+
+
+async def test_review_transition_supports_approval_and_reopening(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    token = make_token(
+        wiki_page_api_context.editor_subject,
+        wiki_page_api_context.tenant_id,
+    )
+
+    for target_status in ("needs_review", "approved", "needs_review"):
+        response = await review_page(
+            wiki_page_api_context,
+            wiki_page_api_context.page_artifact_id,
+            target_status,
+            token=token,
+        )
+        assert response.status_code == 200
+        assert response.json()["review_status"] == target_status
+
+
+async def test_same_review_status_is_idempotent(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    token = make_token(
+        wiki_page_api_context.editor_subject,
+        wiki_page_api_context.tenant_id,
+    )
+
+    response = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        "draft",
+        token=token,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "artifact_id": str(wiki_page_api_context.page_artifact_id),
+        "tenant_id": str(wiki_page_api_context.tenant_id),
+        "previous_status": "draft",
+        "review_status": "draft",
+        "changed": False,
+    }
+
+
+async def test_viewer_cannot_change_review_status(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    response = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        "needs_review",
+        token=make_token(wiki_page_api_context.subject, wiki_page_api_context.tenant_id),
+    )
+
+    assert response.status_code == 403
+    async with wiki_page_api_context.session_factory() as session:
+        artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
+    assert artifact is not None
+    assert artifact.review_status == "draft"
+
+
+async def test_foreign_and_missing_review_targets_are_indistinguishable(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    token = make_token(
+        wiki_page_api_context.editor_subject,
+        wiki_page_api_context.tenant_id,
+    )
+    foreign_response = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.foreign_page_artifact_id,
+        "needs_review",
+        token=token,
+    )
+    missing_response = await review_page(
+        wiki_page_api_context,
+        uuid4(),
+        "needs_review",
+        token=token,
+    )
+
+    assert foreign_response.status_code == 404
+    assert missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json()
+
+
+async def test_invalid_review_transition_does_not_change_metadata(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    token = make_token(
+        wiki_page_api_context.editor_subject,
+        wiki_page_api_context.tenant_id,
+    )
+    response = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        "approved",
+        token=token,
+    )
+
+    assert response.status_code == 409
+    async with wiki_page_api_context.session_factory() as session:
+        artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
+        review_audit = await session.scalar(
+            select(AuditEvent).where(AuditEvent.action == "wiki.page.review")
+        )
+    assert artifact is not None
+    assert artifact.review_status == "draft"
+    assert review_audit is None
+
+
+async def test_stale_compare_and_set_cannot_overwrite_current_status(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    async with wiki_page_api_context.session_factory() as session:
+        repository = WikiPageArtifactRepository(session)
+        updated = await repository.compare_and_set_review_status(
+            tenant_id=wiki_page_api_context.tenant_id,
+            artifact_id=wiki_page_api_context.page_artifact_id,
+            expected_status="needs_review",
+            new_status="approved",
+        )
+        await session.rollback()
+
+    assert updated is False
+    async with wiki_page_api_context.session_factory() as session:
+        artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
+    assert artifact is not None
+    assert artifact.review_status == "draft"
+
+
+async def test_audit_failure_rolls_back_review_status(
+    wiki_page_api_context: WikiPageApiContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openwikirag.infrastructure.repositories.audit import AuditRepository
+
+    async def fail_record(self: AuditRepository, **kwargs: Any) -> AuditEvent:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(AuditRepository, "record", fail_record)
+    response = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        "needs_review",
+        token=make_token(
+            wiki_page_api_context.editor_subject,
+            wiki_page_api_context.tenant_id,
+        ),
+    )
+
+    assert response.status_code == 500
+    async with wiki_page_api_context.session_factory() as session:
+        artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
+    assert artifact is not None
+    assert artifact.review_status == "draft"
+
+
+async def test_unknown_persisted_review_status_fails_closed(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    async with wiki_page_api_context.session_factory() as session:
+        artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
+        assert artifact is not None
+        artifact.review_status = "retired"
+        await session.commit()
+
+    response = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        "needs_review",
+        token=make_token(
+            wiki_page_api_context.editor_subject,
+            wiki_page_api_context.tenant_id,
+        ),
+    )
+
+    assert response.status_code == 500
