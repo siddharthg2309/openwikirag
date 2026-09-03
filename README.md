@@ -27,8 +27,9 @@ uv run python -m apps.worker.app.main
 
 Use `--once` for one bounded relay/reclaim/consume cycle during local smoke
 checks. The current worker produces deterministic normalized artifacts for
-UTF-8 text, Markdown, and text-bearing digital PDFs; DOCX, OCR, and scanned-PDF
-quality classification remain later slices.
+UTF-8 text, Markdown, and text-bearing digital PDFs; DOCX and automatic OCR
+activation remain later slices. PDF quality metadata already identifies pages
+that may need OCR.
 
 Then open:
 
@@ -63,6 +64,12 @@ The worker relays the outbox event through Redis Streams and currently extracts
 UTF-8 text, Markdown, and text-bearing digital PDFs into immutable normalized
 artifacts. PDF artifacts also record deterministic page-coverage quality
 metadata and a future-OCR handoff signal; DOCX and OCR are not active yet.
+
+The OCR boundary is implemented behind replaceable page-renderer and engine
+ports, with optional Poppler/Tesseract process adapters. Native OCR is not
+enabled in the worker yet. To exercise those adapters locally on macOS, install
+the native tools with `brew install poppler tesseract`; the repository does not
+claim runtime OCR integration until it is exercised on the target machine.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/documents \
