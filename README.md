@@ -76,7 +76,9 @@ generation results can now be persisted as immutable JSON objects with
 tenant/version/checksum metadata in PostgreSQL. A second immutable page artifact
 now packages the complete deterministic skeleton together with the validated
 generated fields, so a future reader or reviewer can load one self-contained
-page object without reconstructing the skeleton. No real LLM call, worker
+page object without reconstructing the skeleton. Authenticated tenant members
+can now read that page through an integrity-checked API path with success
+auditing. No real LLM call, worker
 activation, or human review workflow is active yet.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine

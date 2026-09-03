@@ -15,6 +15,24 @@ class WikiPageArtifactRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def get_by_id(
+        self,
+        *,
+        tenant_id: UUID,
+        artifact_id: UUID,
+    ) -> WikiPageArtifact | None:
+        """Load one page artifact only inside the requested tenant scope."""
+
+        return cast(
+            WikiPageArtifact | None,
+            await self._session.scalar(
+                select(WikiPageArtifact).where(
+                    WikiPageArtifact.id == artifact_id,
+                    WikiPageArtifact.tenant_id == tenant_id,
+                )
+            ),
+        )
+
     async def get_generation_artifact(
         self,
         *,

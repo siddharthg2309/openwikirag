@@ -3,6 +3,7 @@
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, Self
 from uuid import UUID
 
@@ -17,6 +18,7 @@ from openwikirag.infrastructure.repositories.wiki_page_artifacts import (
     WikiPageArtifactRepository,
 )
 from openwikirag.infrastructure.storage import ObjectStorage, ObjectStorageError
+from openwikirag.security.authorization import AuthorizationService, Permission, Principal
 
 
 class WikiPageArtifactError(Exception):
@@ -41,6 +43,10 @@ class WikiPageArtifactStorageError(WikiPageArtifactError):
 
 class WikiPageArtifactConflictError(WikiPageArtifactError):
     """Raised when immutable page-artifact metadata or bytes disagree."""
+
+
+class WikiPageArtifactIntegrityError(WikiPageArtifactError):
+    """Raised when stored page-artifact bytes fail checksum or schema validation."""
 
 
 class WikiPageArtifactPersistenceError(WikiPageArtifactError):
@@ -112,6 +118,23 @@ class PersistedWikiPageArtifact:
     artifact_object_key: str
     review_status: str
     reused: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ReadWikiPageArtifact:
+    """Validated page package returned by the tenant-scoped read service."""
+
+    artifact_id: UUID
+    tenant_id: UUID
+    generation_artifact_id: UUID
+    document_version_id: UUID
+    normalized_artifact_id: UUID
+    page_checksum: str
+    generation_result_checksum_sha256: str
+    content_checksum_sha256: str
+    review_status: str
+    created_at: datetime
+    package: WikiGeneratedPage
 
 
 class WikiPageArtifactService:
@@ -279,6 +302,78 @@ class WikiPageArtifactService:
             return True
         return False
 
+
+class WikiPageArtifactReadService:
+    """Read and validate one page package for the authenticated tenant."""
+
+    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
+        self._session = session
+        self._storage = storage
+        self._artifacts = WikiPageArtifactRepository(session)
+        self._authorization = AuthorizationService()
+
+    async def get(
+        self,
+        *,
+        principal: Principal,
+        artifact_id: UUID,
+    ) -> ReadWikiPageArtifact | None:
+        """Return a page only after authorization, checksum, and schema checks."""
+
+        self._authorization.require(principal, Permission.READ_DOCUMENTS)
+        artifact = await self._artifacts.get_by_id(
+            tenant_id=UUID(principal.tenant_id),
+            artifact_id=artifact_id,
+        )
+        if artifact is None:
+            return None
+
+        try:
+            data = await self._storage.get(object_key=artifact.artifact_object_key)
+        except ObjectStorageError as exc:
+            raise WikiPageArtifactStorageError(
+                "The WikiRAG page-artifact object could not be read."
+            ) from exc
+        if hashlib.sha256(data).hexdigest() != artifact.content_checksum_sha256:
+            raise WikiPageArtifactIntegrityError(
+                "The page-artifact object checksum does not match metadata."
+            )
+
+        try:
+            package = WikiGeneratedPage.model_validate(json.loads(data))
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            TypeError,
+            ValueError,
+            ValidationError,
+        ) as exc:
+            raise WikiPageArtifactIntegrityError(
+                "The page-artifact object does not match its schema."
+            ) from exc
+        if (
+            package.checksum_sha256 != artifact.content_checksum_sha256
+            or package.page.checksum_sha256 != artifact.page_checksum
+            or package.generation.checksum_sha256
+            != artifact.generation_result_checksum_sha256
+        ):
+            raise WikiPageArtifactIntegrityError(
+                "The page-artifact object does not match metadata lineage."
+            )
+
+        return ReadWikiPageArtifact(
+            artifact_id=artifact.id,
+            tenant_id=artifact.tenant_id,
+            generation_artifact_id=artifact.generation_artifact_id,
+            document_version_id=artifact.document_version_id,
+            normalized_artifact_id=artifact.normalized_artifact_id,
+            page_checksum=artifact.page_checksum,
+            generation_result_checksum_sha256=artifact.generation_result_checksum_sha256,
+            content_checksum_sha256=artifact.content_checksum_sha256,
+            review_status=artifact.review_status,
+            created_at=artifact.created_at,
+            package=package,
+        )
 
 def _generation_lineage_matches(
     generation_artifact: WikiGenerationArtifact,
