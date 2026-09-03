@@ -73,7 +73,10 @@ generation boundary now accepts only schema-valid summaries, definitions, and
 references whose evidence matches normalized source spans. The document is
 packaged as untrusted JSON data for the future provider, and validated
 generation results can now be persisted as immutable JSON objects with
-tenant/version/checksum metadata in PostgreSQL. No real LLM call, worker
+tenant/version/checksum metadata in PostgreSQL. A second immutable page artifact
+now packages the complete deterministic skeleton together with the validated
+generated fields, so a future reader or reviewer can load one self-contained
+page object without reconstructing the skeleton. No real LLM call, worker
 activation, or human review workflow is active yet.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
