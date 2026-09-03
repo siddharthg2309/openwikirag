@@ -6,17 +6,57 @@ from pathlib import Path
 import structlog
 
 from openwikirag import __version__
+from openwikirag.application.extraction import (
+    DEFAULT_EXTRACTOR_REGISTRY,
+    ExtractorRegistry,
+    MarkdownExtractor,
+    PdfExtractor,
+    PlainTextExtractor,
+)
 from openwikirag.application.ingestion import (
     IngestionConsumerService,
 )
 from openwikirag.application.normalized_artifacts import NormalizedArtifactIngestionHandler
+from openwikirag.application.ocr import (
+    OcrOptions,
+    PdfOcrFallback,
+    PopplerPageRenderer,
+    TesseractOcrEngine,
+)
 from openwikirag.application.outbox import OutboxPublisherService
 from openwikirag.application.worker import WorkerLoop
-from openwikirag.core.config import get_settings
+from openwikirag.core.config import Settings, get_settings
 from openwikirag.core.logging import configure_logging
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.storage import LocalObjectStorage
 from openwikirag.infrastructure.streams import RedisStreamPublisher
+
+
+def build_extractor_registry(settings: Settings) -> ExtractorRegistry:
+    """Compose the default parsers and optionally enable native PDF OCR."""
+
+    if not settings.ocr_enabled:
+        return DEFAULT_EXTRACTOR_REGISTRY
+
+    options = OcrOptions(
+        dpi=settings.ocr_dpi,
+        language=settings.ocr_language,
+        page_segmentation_mode=settings.ocr_page_segmentation_mode,
+        timeout_seconds=settings.ocr_timeout_seconds,
+        max_pages=settings.ocr_max_pages,
+    )
+    fallback = PdfOcrFallback(
+        renderer=PopplerPageRenderer(),
+        engine=TesseractOcrEngine(),
+        options=options,
+    )
+    return ExtractorRegistry(
+        (
+            PlainTextExtractor(),
+            MarkdownExtractor(),
+            PdfExtractor(ocr_fallback=fallback),
+        )
+    )
 
 
 async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = False) -> None:
@@ -27,6 +67,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
     session_factory = create_session_factory(engine)
     transport = RedisStreamPublisher.from_url(settings.redis_url)
     storage = LocalObjectStorage(Path(settings.object_store_root))
+    extractors = build_extractor_registry(settings)
     try:
         async with session_factory() as session:
             outbox = OutboxPublisherService(
@@ -37,7 +78,11 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
             ingestion = IngestionConsumerService(
                 session,
                 transport,
-                NormalizedArtifactIngestionHandler(session, storage),
+                NormalizedArtifactIngestionHandler(
+                    session,
+                    storage,
+                    extractors=extractors,
+                ),
                 stream_name=settings.ingestion_stream_name,
                 group_name=settings.ingestion_consumer_group,
                 consumer_name=settings.ingestion_consumer_name,

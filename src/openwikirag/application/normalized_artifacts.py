@@ -14,6 +14,7 @@ from openwikirag.application.extraction import (
     NormalizedDocument,
 )
 from openwikirag.application.ingestion import PermanentJobError, RetryableJobError
+from openwikirag.application.ocr import InvalidOcrRequestError, OcrError
 from openwikirag.infrastructure.models import IngestionJob, NormalizedDocumentArtifact
 from openwikirag.infrastructure.repositories.normalized_artifacts import (
     NormalizedArtifactRepository,
@@ -48,8 +49,14 @@ class NormalizedArtifactPersistenceError(NormalizedArtifactError):
 class NormalizedArtifactIngestionHandler:
     """Map claimed ingestion jobs to durable normalized-artifact persistence."""
 
-    def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
-        self._artifacts = NormalizedArtifactService(session, storage)
+    def __init__(
+        self,
+        session: AsyncSession,
+        storage: ObjectStorage,
+        *,
+        extractors: ExtractorRegistry = DEFAULT_EXTRACTOR_REGISTRY,
+    ) -> None:
+        self._artifacts = NormalizedArtifactService(session, storage, extractors=extractors)
 
     async def handle(self, *, job: IngestionJob, payload: dict[str, object]) -> None:
         """Persist the job's canonical source version, never a payload-selected one."""
@@ -64,8 +71,11 @@ class NormalizedArtifactIngestionHandler:
             DocumentVersionNotFoundError,
             NormalizedArtifactConflictError,
             ExtractionError,
+            InvalidOcrRequestError,
         ) as exc:
             raise PermanentJobError("The document cannot produce a normalized artifact.") from exc
+        except OcrError as exc:
+            raise RetryableJobError("The OCR provider will be retried.") from exc
         except (NormalizedArtifactStorageError, NormalizedArtifactPersistenceError) as exc:
             raise RetryableJobError("The normalized artifact will be retried.") from exc
 

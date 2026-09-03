@@ -1,5 +1,6 @@
 """Proof for deterministic normalized-text extraction and provenance."""
 
+from collections.abc import Sequence
 from io import BytesIO
 
 import pytest
@@ -18,12 +19,15 @@ from openwikirag.application.extraction import (
     MarkdownExtractor,
     NormalizedDocument,
     NoTextExtractedError,
+    OcrMetadata,
+    PdfExtractor,
     PdfTextQualityAssessment,
     PdfTextQualityClassifier,
     PlainTextExtractor,
     SourceSpan,
     UnsupportedSourceTypeError,
 )
+from openwikirag.application.ocr import OcrPageResult
 
 
 def _digital_pdf(*pages: str) -> bytes:
@@ -51,6 +55,28 @@ def _digital_pdf(*pages: str) -> bytes:
     output = BytesIO()
     writer.write(output)
     return output.getvalue()
+
+
+class FakeOcrFallback:
+    artifact_identity = "ocr-test-v1"
+
+    def __init__(self, page_text: dict[int, str]) -> None:
+        self.page_text = page_text
+        self.calls: list[tuple[int, ...]] = []
+
+    def extract(
+        self,
+        *,
+        pdf_data: bytes,
+        page_numbers: Sequence[int],
+    ) -> tuple[OcrPageResult, ...]:
+        del pdf_data
+        requested_pages = tuple(page_numbers)
+        self.calls.append(requested_pages)
+        return tuple(
+            OcrPageResult(page_number=page_number, text=self.page_text[page_number])
+            for page_number in requested_pages
+        )
 
 
 def test_plain_text_is_deterministic_and_preserves_line_offset_mapping() -> None:
@@ -202,6 +228,65 @@ def test_pdf_with_empty_pages_retains_text_and_marks_ocr_needed() -> None:
     assert document.quality.text_page_count == 2
     assert document.quality.needs_ocr is True
     assert [span.page_number for span in document.spans] == [1, 3]
+
+
+def test_pdf_ocr_fallback_merges_only_missing_pages_with_explicit_provenance() -> None:
+    fallback = FakeOcrFallback({2: "Scanned page"})
+    extractor = PdfExtractor(ocr_fallback=fallback)
+
+    document = extractor.extract(data=_digital_pdf("First page", "", "Third page"))
+
+    assert fallback.calls == [(2,)]
+    assert document.text == "First page\nScanned page\nThird page"
+    assert document.parser_name == "pypdf-ocr"
+    assert document.parser_version == "pypdf-6-page-text-quality-v1+ocr-test-v1"
+    assert document.quality is not None
+    assert document.quality.status == "sufficient"
+    assert document.quality.needs_ocr is False
+    assert document.ocr == OcrMetadata(
+        pipeline_identity="ocr-test-v1",
+        attempted_page_numbers=(2,),
+        recovered_page_numbers=(2,),
+    )
+    assert [span.page_number for span in document.spans] == [1, 2, 3]
+    assert [span.kind for span in document.spans] == ["digital", "ocr", "digital"]
+    assert document.canonical_payload()["ocr"] == {
+        "pipeline_identity": "ocr-test-v1",
+        "attempted_page_numbers": [2],
+        "recovered_page_numbers": [2],
+    }
+
+
+def test_pdf_ocr_fallback_is_not_called_when_every_page_has_digital_text() -> None:
+    fallback = FakeOcrFallback({})
+
+    document = PdfExtractor(ocr_fallback=fallback).extract(
+        data=_digital_pdf("First page", "Second page")
+    )
+
+    assert fallback.calls == []
+    assert document.parser_name == "pypdf"
+    assert document.ocr is None
+    assert "ocr" not in document.canonical_payload()
+
+
+def test_pdf_ocr_fallback_rejects_incomplete_page_results() -> None:
+    class WrongPageFallback:
+        artifact_identity = "ocr-test-v1"
+
+        def extract(
+            self,
+            *,
+            pdf_data: bytes,
+            page_numbers: Sequence[int],
+        ) -> tuple[OcrPageResult, ...]:
+            del pdf_data, page_numbers
+            return (OcrPageResult(page_number=99, text="wrong page"),)
+
+    with pytest.raises(InvalidProvenanceError, match="exactly the requested pages"):
+        PdfExtractor(ocr_fallback=WrongPageFallback()).extract(
+            data=_digital_pdf("First page", "", "Third page")
+        )
 
 
 def test_pdf_rejects_malformed_encrypted_and_textless_inputs() -> None:

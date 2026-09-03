@@ -11,6 +11,8 @@ from typing import Literal, Protocol
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+from openwikirag.application.ocr import OcrPageResult
+
 NORMALIZED_DOCUMENT_SCHEMA_VERSION = "normalized-document-v1"
 type PdfTextQualityStatus = Literal["sufficient", "partial", "empty"]
 
@@ -49,6 +51,32 @@ class InvalidProvenanceError(ExtractionError):
 
 class InvalidPdfTextQualityError(ExtractionError):
     """Raised when a PDF quality assessment violates its count invariants."""
+
+
+@dataclass(frozen=True, slots=True)
+class OcrMetadata:
+    """Provenance metadata for an OCR-enriched normalized PDF artifact."""
+
+    pipeline_identity: str
+    attempted_page_numbers: tuple[int, ...]
+    recovered_page_numbers: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if not self.pipeline_identity:
+            raise InvalidProvenanceError("OCR metadata requires a pipeline identity.")
+        _validate_page_numbers(self.attempted_page_numbers)
+        _validate_page_numbers(self.recovered_page_numbers)
+        if not set(self.recovered_page_numbers).issubset(self.attempted_page_numbers):
+            raise InvalidProvenanceError("Recovered OCR pages must have been attempted.")
+
+    def canonical_payload(self) -> dict[str, object]:
+        """Return stable metadata for the canonical artifact payload."""
+
+        return {
+            "pipeline_identity": self.pipeline_identity,
+            "attempted_page_numbers": list(self.attempted_page_numbers),
+            "recovered_page_numbers": list(self.recovered_page_numbers),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,10 +208,13 @@ class NormalizedDocument:
     text: str
     spans: tuple[SourceSpan, ...]
     quality: PdfTextQualityAssessment | None = None
+    ocr: OcrMetadata | None = None
 
     def __post_init__(self) -> None:
         if not self.source_type or not self.parser_name or not self.parser_version:
             raise InvalidProvenanceError("Source type and parser identity are required.")
+        if self.ocr is not None and self.source_type != "pdf":
+            raise InvalidProvenanceError("OCR metadata is supported only for PDF artifacts.")
         if not self.text.strip():
             raise NoTextExtractedError("The document contains no meaningful normalized text.")
         if not self.spans:
@@ -225,6 +256,8 @@ class NormalizedDocument:
         }
         if self.quality is not None:
             payload["quality"] = self.quality.canonical_payload()
+        if self.ocr is not None:
+            payload["ocr"] = self.ocr.canonical_payload()
         return payload
 
     def canonical_bytes(self) -> bytes:
@@ -253,6 +286,22 @@ class DocumentExtractor(Protocol):
 
     def extract(self, data: bytes) -> NormalizedDocument:
         """Produce one canonical normalized document or raise an extraction error."""
+
+
+class PdfOcrProcessor(Protocol):
+    """Process selected PDF pages and expose identity for artifact versioning."""
+
+    @property
+    def artifact_identity(self) -> str:
+        """Return a stable identity for the OCR implementation and settings."""
+
+    def extract(
+        self,
+        *,
+        pdf_data: bytes,
+        page_numbers: Sequence[int],
+    ) -> tuple[OcrPageResult, ...]:
+        """Return one OCR observation for each requested page."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -326,6 +375,7 @@ class PdfExtractor:
     quality_classifier: PdfTextQualityClassifier = field(
         default_factory=PdfTextQualityClassifier
     )
+    ocr_fallback: PdfOcrProcessor | None = None
 
     def extract(self, data: bytes) -> NormalizedDocument:
         try:
@@ -335,7 +385,7 @@ class PdfExtractor:
         if reader.is_encrypted:
             raise EncryptedPdfError("Encrypted PDFs are not supported.")
 
-        pages: list[tuple[int, str, tuple[_LineSegment, ...]]] = []
+        pages: dict[int, tuple[str, tuple[_LineSegment, ...], str]] = {}
         page_texts: list[str] = []
         try:
             for page_number, page in enumerate(reader.pages, start=1):
@@ -344,9 +394,38 @@ class PdfExtractor:
                 page_texts.append(normalized_text)
                 if not extracted_text.strip():
                     continue
-                pages.append((page_number, normalized_text, segments))
+                pages[page_number] = (normalized_text, segments, "digital")
         except (OSError, PdfReadError, ValueError) as exc:
             raise MalformedPdfError("A PDF page could not be extracted.") from exc
+
+        missing_page_numbers = tuple(
+            page_number
+            for page_number, page_text in enumerate(page_texts, start=1)
+            if not page_text.strip()
+        )
+        ocr_metadata: OcrMetadata | None = None
+        if self.ocr_fallback is not None and missing_page_numbers:
+            ocr_results = tuple(
+                self.ocr_fallback.extract(
+                    pdf_data=data,
+                    page_numbers=missing_page_numbers,
+                )
+            )
+            _validate_ocr_results(missing_page_numbers, ocr_results)
+            for result in ocr_results:
+                normalized_text, segments = _canonicalize_line_endings(result.text)
+                page_texts[result.page_number - 1] = normalized_text
+                if normalized_text.strip():
+                    pages[result.page_number] = (normalized_text, segments, "ocr")
+            ocr_metadata = OcrMetadata(
+                pipeline_identity=self.ocr_fallback.artifact_identity,
+                attempted_page_numbers=tuple(result.page_number for result in ocr_results),
+                recovered_page_numbers=tuple(
+                    result.page_number
+                    for result in ocr_results
+                    if page_texts[result.page_number - 1].strip()
+                ),
+            )
 
         if not pages:
             raise NoTextExtractedError("The PDF contains no extractable digital text.")
@@ -355,7 +434,8 @@ class PdfExtractor:
         text_parts: list[str] = []
         spans: list[SourceSpan] = []
         normalized_offset = 0
-        for page_index, (page_number, page_text, segments) in enumerate(pages):
+        ordered_pages = sorted(pages.items())
+        for page_index, (page_number, (page_text, segments, kind)) in enumerate(ordered_pages):
             page_boundary = "" if page_text.endswith("\n") or page_index == len(pages) - 1 else "\n"
             text_parts.append(page_text + page_boundary)
             for segment_index, segment in enumerate(segments):
@@ -370,17 +450,23 @@ class PdfExtractor:
                         source_end_char=segment.source_end_char,
                         page_number=page_number,
                         section_path=(),
+                        kind=kind,
                     )
                 )
             normalized_offset += len(page_text) + len(page_boundary)
 
         return NormalizedDocument(
             source_type=self.source_type,
-            parser_name=self.parser_name,
-            parser_version=self.parser_version,
+            parser_name="pypdf-ocr" if ocr_metadata is not None else self.parser_name,
+            parser_version=(
+                f"{self.parser_version}+{ocr_metadata.pipeline_identity}"
+                if ocr_metadata is not None
+                else self.parser_version
+            ),
             text="".join(text_parts),
             spans=tuple(spans),
             quality=quality,
+            ocr=ocr_metadata,
         )
 
 
@@ -396,13 +482,18 @@ class ExtractorRegistry:
                 )
             self._extractors[extractor.source_type] = extractor
 
-    def extract(self, *, source_type: str, data: bytes) -> NormalizedDocument:
+    def get(self, *, source_type: str) -> DocumentExtractor:
+        """Return the configured extractor for composition and diagnostics."""
+
         extractor = self._extractors.get(source_type)
         if extractor is None:
             raise UnsupportedSourceTypeError(
                 f"No extractor is registered for '{source_type}'."
             )
-        return extractor.extract(data)
+        return extractor
+
+    def extract(self, *, source_type: str, data: bytes) -> NormalizedDocument:
+        return self.get(source_type=source_type).extract(data)
 
 
 DEFAULT_EXTRACTOR_REGISTRY = ExtractorRegistry(
@@ -492,3 +583,27 @@ def _markdown_heading(line: str) -> tuple[int, str] | None:
     if not title:
         return None
     return len(match.group(1)), title
+
+
+def _validate_page_numbers(page_numbers: tuple[int, ...]) -> None:
+    if not page_numbers:
+        raise InvalidProvenanceError("OCR metadata requires at least one page.")
+    if any(page_number < 1 for page_number in page_numbers):
+        raise InvalidProvenanceError("OCR metadata page numbers start at one.")
+    if tuple(page_numbers) != tuple(sorted(page_numbers)):
+        raise InvalidProvenanceError("OCR metadata pages must be sorted.")
+    if len(set(page_numbers)) != len(page_numbers):
+        raise InvalidProvenanceError("OCR metadata pages cannot contain duplicates.")
+
+
+def _validate_ocr_results(
+    requested_page_numbers: tuple[int, ...],
+    results: tuple[OcrPageResult, ...],
+) -> None:
+    if any(not isinstance(result, OcrPageResult) for result in results):
+        raise InvalidProvenanceError("The OCR processor returned an invalid page result.")
+    result_page_numbers = tuple(result.page_number for result in results)
+    if result_page_numbers != requested_page_numbers:
+        raise InvalidProvenanceError(
+            "The OCR processor must return exactly the requested pages in order."
+        )

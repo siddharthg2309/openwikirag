@@ -3,7 +3,10 @@
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from apps.worker.app.main import build_extractor_registry
+from openwikirag.application.extraction import PdfExtractor
 from openwikirag.application.worker import WorkerLoop
+from openwikirag.core.config import Settings
 
 
 class FakeOutbox:
@@ -117,3 +120,15 @@ async def test_cycle_error_rolls_back_and_uses_error_backoff() -> None:
     assert session.rollback_calls == 1
     assert delays == [0.2]
     assert ingestion.calls == ["ensure_group"]
+
+
+def test_worker_composition_keeps_ocr_opt_in() -> None:
+    disabled = build_extractor_registry(Settings(ocr_enabled=False))
+    disabled_pdf = disabled.get(source_type="pdf")
+    assert isinstance(disabled_pdf, PdfExtractor)
+    assert disabled_pdf.ocr_fallback is None
+
+    enabled = build_extractor_registry(Settings(ocr_enabled=True))
+    enabled_pdf = enabled.get(source_type="pdf")
+    assert isinstance(enabled_pdf, PdfExtractor)
+    assert enabled_pdf.ocr_fallback is not None

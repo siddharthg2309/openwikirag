@@ -1,5 +1,5 @@
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -11,6 +11,12 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from openwikirag.application.extraction import (
+    ExtractorRegistry,
+    MarkdownExtractor,
+    PdfExtractor,
+    PlainTextExtractor,
+)
 from openwikirag.application.ingestion import (
     IngestionConsumerService,
     IngestionHandler,
@@ -18,6 +24,7 @@ from openwikirag.application.ingestion import (
     RetryableJobError,
 )
 from openwikirag.application.normalized_artifacts import NormalizedArtifactIngestionHandler
+from openwikirag.application.ocr import OcrPageResult, OcrUnavailableError
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import (
     Base,
@@ -125,6 +132,28 @@ class RecordingHandler:
             failure = self.failure
             self.failure = None
             raise failure
+
+
+class FakeOcrFallback:
+    artifact_identity = "ocr-test-v1"
+
+    def __init__(self, page_text: dict[int, str]) -> None:
+        self.page_text = page_text
+        self.calls: list[tuple[int, ...]] = []
+
+    def extract(
+        self,
+        *,
+        pdf_data: bytes,
+        page_numbers: Sequence[int],
+    ) -> tuple[OcrPageResult, ...]:
+        del pdf_data
+        requested_pages = tuple(page_numbers)
+        self.calls.append(requested_pages)
+        return tuple(
+            OcrPageResult(page_number=page_number, text=self.page_text[page_number])
+            for page_number in requested_pages
+        )
 
 
 def make_digital_pdf(*pages: str) -> bytes:
@@ -499,6 +528,105 @@ async def test_digital_pdf_job_persists_a_page_provenanced_artifact(
     assert artifact.parser_version == "pypdf-6-page-text-quality-v1"
     assert artifact.span_count == 2
     assert transport.acknowledged == ["1-0"]
+
+
+async def test_worker_ocr_activation_merges_only_missing_pdf_pages(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="pdf",
+        data=make_digital_pdf("First page", "", "Third page"),
+    )
+    fallback = FakeOcrFallback({2: "Scanned page"})
+    extractors = ExtractorRegistry(
+        (
+            PlainTextExtractor(),
+            MarkdownExtractor(),
+            PdfExtractor(ocr_fallback=fallback),
+        )
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    handler = NormalizedArtifactIngestionHandler(
+        session,
+        storage,
+        extractors=extractors,
+    )
+
+    assert await make_service(session, transport, handler).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "succeeded"
+    assert fallback.calls == [(2,)]
+    artifact = await session.scalar(select(NormalizedDocumentArtifact))
+    assert artifact is not None
+    assert artifact.parser_name == "pypdf-ocr"
+    assert artifact.parser_version == "pypdf-6-page-text-quality-v1+ocr-test-v1"
+    stored = json.loads(
+        (await storage.get(object_key=artifact.artifact_object_key)).decode("utf-8")
+    )
+    assert stored["text"] == "First page\nScanned page\nThird page"
+    assert [span["kind"] for span in stored["spans"]] == ["digital", "ocr", "digital"]
+    assert stored["quality"]["status"] == "sufficient"
+    assert stored["quality"]["needs_ocr"] is False
+    assert stored["ocr"] == {
+        "pipeline_identity": "ocr-test-v1",
+        "attempted_page_numbers": [2],
+        "recovered_page_numbers": [2],
+    }
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_ocr_provider_failure_is_retryable_and_unacknowledged(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    class FailingOcrFallback:
+        artifact_identity = "ocr-test-v1"
+
+        def extract(
+            self,
+            *,
+            pdf_data: bytes,
+            page_numbers: Sequence[int],
+        ) -> tuple[OcrPageResult, ...]:
+            del pdf_data, page_numbers
+            raise OcrUnavailableError("tesseract is unavailable")
+
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="pdf",
+        data=make_digital_pdf("First page", "", "Third page"),
+    )
+    extractors = ExtractorRegistry(
+        (
+            PlainTextExtractor(),
+            MarkdownExtractor(),
+            PdfExtractor(ocr_fallback=FailingOcrFallback()),
+        )
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    handler = NormalizedArtifactIngestionHandler(
+        session,
+        storage,
+        extractors=extractors,
+    )
+
+    assert await make_service(session, transport, handler).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "retryable"
+    assert refreshed.last_error_code == "INGESTION_RETRYABLE_FAILURE"
+    assert transport.acknowledged == []
 
 
 async def test_storage_failure_remains_retryable_and_unacknowledged(

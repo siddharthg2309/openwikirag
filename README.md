@@ -27,9 +27,9 @@ uv run python -m apps.worker.app.main
 
 Use `--once` for one bounded relay/reclaim/consume cycle during local smoke
 checks. The current worker produces deterministic normalized artifacts for
-UTF-8 text, Markdown, and text-bearing digital PDFs; DOCX and automatic OCR
-activation remain later slices. PDF quality metadata already identifies pages
-that may need OCR.
+UTF-8 text, Markdown, and text-bearing digital PDFs; DOCX remains a later
+slice. PDF quality metadata identifies pages that may need the opt-in OCR
+fallback.
 
 Then open:
 
@@ -63,13 +63,15 @@ PostgreSQL stores the document/version metadata plus a pending ingestion job.
 The worker relays the outbox event through Redis Streams and currently extracts
 UTF-8 text, Markdown, and text-bearing digital PDFs into immutable normalized
 artifacts. PDF artifacts also record deterministic page-coverage quality
-metadata and a future-OCR handoff signal; DOCX and OCR are not active yet.
+metadata and a future-OCR handoff signal; DOCX remains inactive and OCR is
+disabled by default.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
-ports, with optional Poppler/Tesseract process adapters. Native OCR is not
-enabled in the worker yet. To exercise those adapters locally on macOS, install
-the native tools with `brew install poppler tesseract`; the repository does not
-claim runtime OCR integration until it is exercised on the target machine.
+ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
+by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the
+native tools with `brew install poppler tesseract`. The repository does not
+claim native recognition unless that runtime has been exercised on the target
+machine.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/documents \

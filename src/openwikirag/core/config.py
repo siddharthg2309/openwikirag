@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     )
     worker_poll_interval_seconds: float = Field(default=1.0, gt=0, le=60)
     worker_error_backoff_seconds: float = Field(default=5.0, gt=0, le=300)
+    ocr_enabled: bool = False
+    ocr_dpi: int = Field(default=200, ge=72, le=600)
+    ocr_language: str = Field(default="eng", min_length=1, max_length=64)
+    ocr_page_segmentation_mode: int = Field(default=6, ge=0, le=13)
+    ocr_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
+    ocr_max_pages: int = Field(default=50, ge=1, le=500)
 
 
 @lru_cache

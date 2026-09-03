@@ -23,21 +23,21 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 3, Slice 3.6 — Replaceable OCR fallback boundary.
+Current verified slice: Phase 3, Slice 3.7 — Activate OCR fallback in normalized PDF artifacts.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 100 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 106 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
 | Automated tests | Focused ingestion lifecycle tests | 6 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py` |
 | Automated tests | Focused job-progress API tests | 8 passed | verified | `uv run pytest apps/api/tests/test_jobs.py` |
 | Automated tests | Focused worker lifecycle tests | 4 passed | verified | `uv run pytest apps/worker/tests/test_worker.py` |
-| Automated tests | Focused extraction/provenance/quality tests | 12 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
+| Automated tests | Focused extraction/provenance/quality/OCR-merge tests | 15 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
 | Automated tests | Focused OCR-boundary tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_ocr.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
-| Automated tests | Focused artifact-activation regression tests | 21 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
+| Automated tests | Focused artifact-activation regression tests | 24 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
 | Static quality | Mypy | 0 issues across 54 source files | verified | `uv run mypy` |
@@ -71,6 +71,8 @@ Current verified slice: Phase 3, Slice 3.6 — Replaceable OCR fallback boundary
 | Extraction | Active worker source types | 3 (UTF-8 text, Markdown, text-bearing digital PDF) | verified | Concrete worker handler, lifecycle tests, and Slice 3.4 smoke test |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
+| Extraction | OCR-enriched merge proof | 1 mixed three-page fixture; only the missing page was OCR-routed and recovered | verified | Fake OCR extraction and consumer tests |
+| Worker | OCR-enabled consumer path | 1 mixed PDF job succeeded with fake OCR; acknowledged after artifact/job commit | verified | `apps/api/tests/test_ingestion.py` |
 | Integration | Native OCR runtime availability | Poppler render verified; Tesseract unavailable on verification host | unverified | Real generated-PDF Poppler check; `command -v tesseract` absent |
 
 The current suite count includes the PostgreSQL integration test only when its
@@ -240,6 +242,8 @@ versions rather than pretending to have scale results.
 - Added explainable PDF page-coverage classification with **3 quality states** and a deterministic `needs_ocr` handoff, preserving usable text from mixed PDFs while deferring OCR execution; verified with a real three-page PostgreSQL 16 + Redis 7 worker smoke.
 
 - Added a bounded page-level OCR seam with replaceable renderer/engine ports, Poppler/Tesseract CLI adapters, temporary-file cleanup, structured no-shell execution, and typed timeout/provider failures; verified with **19 focused tests**. Native Tesseract execution and worker activation remain unverified.
+
+- Activated opt-in PDF OCR for pages without usable digital text, preserving digital/OCR provenance and immutable `pypdf-ocr` artifact identity; verified with **6 new fake-provider extraction, consumer, and composition tests**. Native Tesseract execution remains unverified.
 
 ### Future measured bullets
 

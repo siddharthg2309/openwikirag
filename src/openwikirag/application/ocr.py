@@ -1,5 +1,7 @@
 """Bounded, replaceable page-level OCR ports and process adapters."""
 
+import hashlib
+import json
 import math
 import re
 import subprocess
@@ -281,6 +283,30 @@ class PdfOcrFallback:
     engine: OcrEngine
     options: OcrOptions = field(default_factory=OcrOptions)
 
+    @property
+    def artifact_identity(self) -> str:
+        """Return a short stable identity for this renderer/engine configuration."""
+
+        identity_payload = {
+            "renderer": _component_identity(self.renderer),
+            "engine": _component_identity(self.engine),
+            "options": {
+                "dpi": self.options.dpi,
+                "language": self.options.language,
+                "page_segmentation_mode": self.options.page_segmentation_mode,
+                "timeout_seconds": self.options.timeout_seconds,
+                "max_pages": self.options.max_pages,
+            },
+        }
+        encoded = json.dumps(
+            identity_payload,
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("ascii")
+        digest = hashlib.sha256(encoded).hexdigest()[:16]
+        return f"ocr-{digest}"
+
     def extract(
         self,
         *,
@@ -367,3 +393,11 @@ def _validate_timeout(timeout_seconds: float) -> None:
 def _stderr_detail(stderr: bytes) -> str:
     detail = stderr.decode("utf-8", errors="replace").strip()
     return detail[:512] or "native command returned no diagnostic output"
+
+
+def _component_identity(component: object) -> dict[str, str]:
+    component_type = type(component)
+    return {
+        "type": f"{component_type.__module__}.{component_type.__qualname__}",
+        "executable": str(getattr(component, "executable", "")),
+    }
