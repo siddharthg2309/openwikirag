@@ -106,6 +106,12 @@ metadata in PostgreSQL. Repeated runs verify and reuse the manifest, while
 changed chunking configuration creates a new identity; embedding and Qdrant
 projection are still deferred.
 
+Phase 5.3 defines a provider-neutral dense-embedding contract with exact input
+checksums, model/provider/configuration identity, fixed dimensions, finite
+cosine-normalized vectors, and deterministic canonical bytes. The local
+feature-hashing adapter proves reproducibility and adapter shape only; it is not
+semantic-search quality evidence.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the

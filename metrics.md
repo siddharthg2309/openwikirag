@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 5, Slice 5.2 — Persist immutable chunk manifests.
+Current verified slice: Phase 5, Slice 5.3 — Deterministic dense-embedding contract.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 196 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 204 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -50,9 +50,10 @@ Current verified slice: Phase 5, Slice 5.2 — Persist immutable chunk manifests
 | Automated tests | Focused WikiRAG regeneration worker tests | 3 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_regeneration or regeneration_event'` |
 | Automated tests | Focused hierarchical chunking tests | 6 passed | verified | `uv run pytest apps/worker/tests/test_chunking.py -q` |
 | Automated tests | Focused chunk-manifest persistence tests | 11 passed | verified | `uv run pytest apps/worker/tests/test_chunk_artifacts.py -q` |
+| Automated tests | Focused dense-embedding contract tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_embeddings.py -q` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 77 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 79 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0008_scope_page_checksum` | verified | PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Chunk-manifest migration | `0009_chunk_manifests` present in source; PostgreSQL application unverified | implemented | `migrations/versions/0009_chunk_manifests.py` |
@@ -103,6 +104,7 @@ Current verified slice: Phase 5, Slice 5.2 — Persist immutable chunk manifests
 | WikiRAG | Regenerated artifact versioning | 1 new configuration-identified generation/page pair per changed regeneration configuration; prior page bytes/review metadata preserved; duplicate delivery reuses artifacts | verified | `WikiRegenerationHandler` and 3 focused worker tests |
 | Chunking | Hierarchical chunk contract | 1 frozen chunk schema with 2 chunk kinds, 5 explicit budget/overlap controls, heading-aware parent grouping, exact offsets/page provenance, and stable SHA-256 ids | verified | `HierarchicalChunker` and 6 focused tests |
 | Chunking | Immutable manifest persistence | 1 canonical JSON manifest plus 1 tenant/version/source-scoped PostgreSQL metadata row per chunking configuration; byte-verified reuse and compensating cleanup | verified | `ChunkManifestService`, migration `0009_chunk_manifests`, and 11 focused persistence tests; PostgreSQL migration execution unverified |
+| Embeddings | Dense embedding contract | 1 provider port, 1 frozen request, 1 frozen result schema, 4 reproducibility identities (input/provider/model/config), exact configured vector dimensions, finite values, and cosine unit-norm validation | verified | `DeterministicHashEmbeddingProvider` and 8 focused tests; semantic quality and external provider execution deferred |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
@@ -310,6 +312,8 @@ versions rather than pretending to have scale results.
 - Added a deterministic hierarchical chunking boundary with **2 chunk kinds** (parent and child), **5 explicit budget/overlap controls**, top-level heading grouping, bounded child overlap, exact normalized offsets, page-range provenance, and stable SHA-256 ids; verified with **6 focused chunking tests** and **185 local tests**. Model-specific tokenizers, chunk persistence, embeddings, Qdrant, retrieval, and reranking remain deferred.
 
 - Persisted deterministic chunks as **1 immutable canonical JSON manifest** plus **1 tenant/version/source-scoped metadata row** with schema/config/content checksums and parent/child counts; repeated runs verify and reuse bytes, while metadata failures trigger compensating cleanup; verified with **11 focused persistence tests** and **196 local tests**. Migration `0009_chunk_manifests` is added, but PostgreSQL/Alembic execution remains unverified; embeddings and Qdrant remain deferred.
+
+- Defined **1 provider-neutral dense-embedding port**, **1 immutable request**, and **1 immutable result schema** with exact input/configuration/model identity, fixed dimensions, finite cosine-normalized vectors, and deterministic canonical bytes; verified with **8 focused tests** and **204 local tests**. The local feature-hashing adapter proves reproducibility and shape only; live model quality, sparse vectors, batching, and Qdrant remain deferred.
 
 ### Future measured bullets
 
