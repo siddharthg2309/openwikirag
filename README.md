@@ -120,6 +120,13 @@ input/configuration/provider/model identity. This local adapter proves lexical
 shape and replayability; corpus IDF, dense/sparse fusion, persistence, Qdrant,
 and semantic ranking quality remain later slices.
 
+Phase 5.5 adds provider-neutral bounded batch orchestration for dense or sparse
+requests. It consumes streaming inputs in sequential batches, caps in-flight
+provider calls with a concurrency limit, restores original request order, and
+cancels unfinished work on failure or caller cancellation. Provider-native
+batching, retries, model caching, persistence, and Qdrant projection remain
+separate concerns.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the

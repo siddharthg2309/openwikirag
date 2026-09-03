@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 5, Slice 5.4 — Deterministic sparse/lexical contract.
+Current verified slice: Phase 5, Slice 5.5 — Bounded batch embedding orchestration.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 213 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 221 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -52,9 +52,10 @@ Current verified slice: Phase 5, Slice 5.4 — Deterministic sparse/lexical cont
 | Automated tests | Focused chunk-manifest persistence tests | 11 passed | verified | `uv run pytest apps/worker/tests/test_chunk_artifacts.py -q` |
 | Automated tests | Focused dense-embedding contract tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_embeddings.py -q` |
 | Automated tests | Focused sparse-embedding contract tests | 9 passed | verified | `uv run pytest apps/worker/tests/test_sparse.py -q` |
+| Automated tests | Focused embedding-batch orchestration tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_embedding_batch.py -q` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 81 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 83 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0008_scope_page_checksum` | verified | PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Chunk-manifest migration | `0009_chunk_manifests` present in source; PostgreSQL application unverified | implemented | `migrations/versions/0009_chunk_manifests.py` |
@@ -107,6 +108,7 @@ Current verified slice: Phase 5, Slice 5.4 — Deterministic sparse/lexical cont
 | Chunking | Immutable manifest persistence | 1 canonical JSON manifest plus 1 tenant/version/source-scoped PostgreSQL metadata row per chunking configuration; byte-verified reuse and compensating cleanup | verified | `ChunkManifestService`, migration `0009_chunk_manifests`, and 11 focused persistence tests; PostgreSQL migration execution unverified |
 | Embeddings | Dense embedding contract | 1 provider port, 1 frozen request, 1 frozen result schema, 4 reproducibility identities (input/provider/model/config), exact configured vector dimensions, finite values, and cosine unit-norm validation | verified | `DeterministicHashEmbeddingProvider` and 8 focused tests; semantic quality and external provider execution deferred |
 | Embeddings | Sparse lexical contract | 1 provider port, 1 frozen request, 1 frozen result schema, bounded hashed indices, positive sublinear term-frequency weights, sorted unique geometry, and exact input/provider/model/configuration identity | verified | `DeterministicHashSparseEmbeddingProvider` and 9 focused tests; corpus IDF, fusion, semantic quality, and Qdrant projection deferred |
+| Embeddings | Bounded batch orchestration | 1 generic provider port, 1 frozen limit configuration, 2 boundedness controls (batch size/concurrency), streaming input consumption, stable output ordering, indexed typed failures, and cancellation cleanup | verified | `EmbeddingBatcher` and 8 focused tests; provider-native batching, retries, cache, and Qdrant projection deferred |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
@@ -318,6 +320,8 @@ versions rather than pretending to have scale results.
 - Defined **1 provider-neutral dense-embedding port**, **1 immutable request**, and **1 immutable result schema** with exact input/configuration/model identity, fixed dimensions, finite cosine-normalized vectors, and deterministic canonical bytes; verified with **8 focused tests** and **204 local tests**. The local feature-hashing adapter proves reproducibility and shape only; live model quality, sparse vectors, batching, and Qdrant remain deferred.
 
 - Defined **1 provider-neutral sparse-embedding port**, **1 immutable request**, and **1 immutable result schema** with Unicode case-folded lexical terms, bounded feature-hashed indices, positive sublinear term-frequency weights, sorted unique sparse geometry, and exact input/provider/model/configuration identity; verified with **9 focused tests** and **213 local tests**. The local hash adapter proves exact-term representation shape and replayability only; corpus IDF, collision/semantic-quality analysis, dense/sparse fusion, batching, persistence, and Qdrant remain deferred.
+
+- Added **1 provider-neutral bounded batch orchestrator** with **2 explicit limits** (maximum batch size and in-flight concurrency), streaming request consumption, stable input-order results, indexed provider/output failures, fail-fast active-batch cancellation, later-batch suppression, and caller-cancellation cleanup; verified with **8 focused tests** and **221 local tests**. Provider-native batching, retries/rate limiting, model cache, persistence, Qdrant projection, and production throughput remain deferred.
 
 ### Future measured bullets
 
