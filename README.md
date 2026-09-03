@@ -135,6 +135,16 @@ closes resources. This caches loaded instances rather than embedding results;
 distributed caching, TTL/invalidation, and Qdrant projection remain later
 concerns.
 
+Phase 5.7 adds a provider-neutral tenant-scoped vector projection contract. Each
+validated chunk can become one immutable point with named dense and sparse
+vectors plus document-version, source, page, language, pipeline, checksum, and
+model/configuration provenance; raw chunk text remains in canonical artifacts.
+Deterministic point identity and canonical-byte comparison make retries create,
+reuse, or fail with an immutable conflict, while tenant filters and
+tenant-scoped reads fail closed. The application has no Qdrant SDK dependency;
+live Qdrant collection provisioning, payload indexes, upserts, and search remain
+later slices.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the
