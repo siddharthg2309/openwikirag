@@ -112,6 +112,14 @@ cosine-normalized vectors, and deterministic canonical bytes. The local
 feature-hashing adapter proves reproducibility and adapter shape only; it is not
 semantic-search quality evidence.
 
+Phase 5.4 adds a separate deterministic sparse/lexical representation for exact
+terms such as identifiers, error codes, and product names. Unicode case-folded
+terms are hashed into bounded indices, repeated terms receive positive
+sublinear weights, and indices are emitted sorted and unique with exact
+input/configuration/provider/model identity. This local adapter proves lexical
+shape and replayability; corpus IDF, dense/sparse fusion, persistence, Qdrant,
+and semantic ranking quality remain later slices.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the
