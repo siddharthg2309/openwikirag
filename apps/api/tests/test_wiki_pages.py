@@ -81,6 +81,7 @@ class WikiPageApiContext:
         editor_subject: str,
         tenant_id: UUID,
         page_artifact_id: UUID,
+        second_page_artifact_id: UUID,
         foreign_page_artifact_id: UUID,
         storage: LocalObjectStorage,
         root: Path,
@@ -90,6 +91,7 @@ class WikiPageApiContext:
         self.editor_subject = editor_subject
         self.tenant_id = tenant_id
         self.page_artifact_id = page_artifact_id
+        self.second_page_artifact_id = second_page_artifact_id
         self.foreign_page_artifact_id = foreign_page_artifact_id
         self.storage = storage
         self.root = root
@@ -179,6 +181,18 @@ async def wiki_page_api_context(tmp_path: Path) -> AsyncIterator[WikiPageApiCont
             generation=generation,
         )
 
+        second_page = WikiPageArtifact(
+            tenant_id=tenant.id,
+            document_version_id=version.id,
+            normalized_artifact_id=persisted_source.artifact_id,
+            generation_artifact_id=persisted_generation.artifact_id,
+            page_checksum="b" * 64,
+            generation_result_checksum_sha256=persisted_page.generation_result_checksum_sha256,
+            content_checksum_sha256="d" * 64,
+            artifact_object_key="tenant/unused-page-2.json",
+        )
+        session.add(second_page)
+
         foreign_page = WikiPageArtifact(
             tenant_id=foreign_tenant.id,
             document_version_id=version.id,
@@ -204,6 +218,7 @@ async def wiki_page_api_context(tmp_path: Path) -> AsyncIterator[WikiPageApiCont
         editor_subject,
         tenant.id,
         persisted_page.artifact_id,
+        second_page.id,
         foreign_page.id,
         storage,
         root,
@@ -255,6 +270,29 @@ async def review_page(
             headers=headers,
             json={"status": target_status},
         )
+
+
+async def list_pages(
+    context: WikiPageApiContext,
+    *,
+    token: str | None,
+    review_status: str | None = None,
+    limit: int | None = None,
+    offset: int | None = None,
+) -> Response:
+    transport = ASGITransport(app=app)
+    headers: dict[str, str] = {}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    params: dict[str, str | int] = {}
+    if review_status is not None:
+        params["review_status"] = review_status
+    if limit is not None:
+        params["limit"] = limit
+    if offset is not None:
+        params["offset"] = offset
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get("/api/v1/wiki/pages", headers=headers, params=params)
 
 
 async def test_viewer_reads_complete_page_and_audits_success(
@@ -638,3 +676,147 @@ async def test_unknown_persisted_review_status_fails_closed(
     )
 
     assert response.status_code == 500
+
+
+async def test_viewer_lists_only_tenant_metadata_with_stable_pagination(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    token = make_token(wiki_page_api_context.subject, wiki_page_api_context.tenant_id)
+
+    first_response = await list_pages(
+        wiki_page_api_context,
+        token=token,
+        limit=1,
+        offset=0,
+    )
+    second_response = await list_pages(
+        wiki_page_api_context,
+        token=token,
+        limit=1,
+        offset=1,
+    )
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    first_payload = first_response.json()
+    second_payload = second_response.json()
+    assert first_payload["limit"] == 1
+    assert first_payload["offset"] == 0
+    assert first_payload["has_more"] is True
+    assert second_payload["has_more"] is False
+    listed_ids = {
+        first_payload["items"][0]["artifact_id"],
+        second_payload["items"][0]["artifact_id"],
+    }
+    assert listed_ids == {
+        str(wiki_page_api_context.page_artifact_id),
+        str(wiki_page_api_context.second_page_artifact_id),
+    }
+    assert all(
+        item["tenant_id"] == str(wiki_page_api_context.tenant_id)
+        for payload in (first_payload, second_payload)
+        for item in payload["items"]
+    )
+    assert "artifact_object_key" not in first_payload["items"][0]
+
+
+async def test_listing_filters_review_status_and_audits_success(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    editor_token = make_token(
+        wiki_page_api_context.editor_subject,
+        wiki_page_api_context.tenant_id,
+    )
+    viewer_token = make_token(
+        wiki_page_api_context.subject,
+        wiki_page_api_context.tenant_id,
+    )
+    transition = await review_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        "needs_review",
+        token=editor_token,
+    )
+    assert transition.status_code == 200
+
+    response = await list_pages(
+        wiki_page_api_context,
+        token=viewer_token,
+        review_status="needs_review",
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [item["artifact_id"] for item in payload["items"]] == [
+        str(wiki_page_api_context.page_artifact_id)
+    ]
+    assert payload["items"][0]["review_status"] == "needs_review"
+    async with wiki_page_api_context.session_factory() as session:
+        audit = await session.scalar(
+            select(AuditEvent).where(AuditEvent.action == "wiki.page.list")
+        )
+    assert audit is not None
+    assert audit.metadata_json == {
+        "review_status": "needs_review",
+        "limit": 50,
+        "offset": 0,
+        "count": 1,
+        "has_more": False,
+    }
+
+
+async def test_empty_listing_returns_success_without_object_storage_read(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    class FailingStorage:
+        async def get(self, *, object_key: str) -> bytes:
+            raise AssertionError("list should not read object storage")
+
+        async def put(self, *, object_key: str, data: bytes, content_type: str) -> None:
+            raise AssertionError("list should not write object storage")
+
+        async def delete(self, *, object_key: str) -> None:
+            raise AssertionError("list should not delete object storage")
+
+    app.dependency_overrides[get_object_storage] = lambda: FailingStorage()
+    try:
+        response = await list_pages(
+            wiki_page_api_context,
+            token=make_token(
+                wiki_page_api_context.subject,
+                wiki_page_api_context.tenant_id,
+            ),
+            review_status="approved",
+        )
+    finally:
+        app.dependency_overrides[get_object_storage] = lambda: wiki_page_api_context.storage
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert response.json()["has_more"] is False
+
+
+async def test_listing_requires_auth_and_validates_query_window(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    unauthenticated = await list_pages(wiki_page_api_context, token=None)
+    invalid_limit = await list_pages(
+        wiki_page_api_context,
+        token=make_token(wiki_page_api_context.subject, wiki_page_api_context.tenant_id),
+        limit=101,
+    )
+    invalid_offset = await list_pages(
+        wiki_page_api_context,
+        token=make_token(wiki_page_api_context.subject, wiki_page_api_context.tenant_id),
+        offset=-1,
+    )
+    invalid_status = await list_pages(
+        wiki_page_api_context,
+        token=make_token(wiki_page_api_context.subject, wiki_page_api_context.tenant_id),
+        review_status="retired",
+    )
+
+    assert unauthenticated.status_code == 401
+    assert invalid_limit.status_code == 422
+    assert invalid_offset.status_code == 422
+    assert invalid_status.status_code == 422

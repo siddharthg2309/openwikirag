@@ -184,6 +184,32 @@ class WikiPageReviewResult:
     changed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class WikiPageArtifactSummary:
+    """Metadata-only page artifact representation for list responses."""
+
+    artifact_id: UUID
+    tenant_id: UUID
+    generation_artifact_id: UUID
+    document_version_id: UUID
+    normalized_artifact_id: UUID
+    page_checksum: str
+    generation_result_checksum_sha256: str
+    content_checksum_sha256: str
+    review_status: WikiPageReviewStatus
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class WikiPageArtifactListResult:
+    """One bounded page-artifact listing window."""
+
+    items: tuple[WikiPageArtifactSummary, ...]
+    limit: int
+    offset: int
+    has_more: bool
+
+
 class WikiPageArtifactService:
     """Persist a complete page package without mutating its source layers."""
 
@@ -490,6 +516,71 @@ class WikiPageArtifactReviewService:
             previous_status=current_status.value,
             review_status=target_status.value,
             changed=True,
+        )
+
+
+class WikiPageArtifactListService:
+    """List tenant-owned page metadata without reading object storage."""
+
+    MAX_LIMIT = 100
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._artifacts = WikiPageArtifactRepository(session)
+        self._authorization = AuthorizationService()
+
+    async def list(
+        self,
+        *,
+        principal: Principal,
+        review_status: WikiPageReviewStatus | None,
+        limit: int,
+        offset: int,
+    ) -> WikiPageArtifactListResult:
+        """Return one tenant-filtered metadata window and a continuation flag."""
+
+        self._authorization.require(principal, Permission.READ_DOCUMENTS)
+        if limit < 1 or limit > self.MAX_LIMIT or offset < 0:
+            await self._session.rollback()
+            raise WikiPageArtifactInputError("The page listing window is invalid.")
+
+        rows = await self._artifacts.list_page_artifacts(
+            tenant_id=UUID(principal.tenant_id),
+            review_status=review_status.value if review_status is not None else None,
+            limit=limit + 1,
+            offset=offset,
+        )
+        has_more = len(rows) > limit
+        summaries: list[WikiPageArtifactSummary] = []
+        for artifact in rows[:limit]:
+            try:
+                status_value = WikiPageReviewStatus(artifact.review_status)
+            except (TypeError, ValueError) as exc:
+                await self._session.rollback()
+                raise WikiPageArtifactIntegrityError(
+                    "The page artifact contains an unsupported review status."
+                ) from exc
+            summaries.append(
+                WikiPageArtifactSummary(
+                    artifact_id=artifact.id,
+                    tenant_id=artifact.tenant_id,
+                    generation_artifact_id=artifact.generation_artifact_id,
+                    document_version_id=artifact.document_version_id,
+                    normalized_artifact_id=artifact.normalized_artifact_id,
+                    page_checksum=artifact.page_checksum,
+                    generation_result_checksum_sha256=(
+                        artifact.generation_result_checksum_sha256
+                    ),
+                    content_checksum_sha256=artifact.content_checksum_sha256,
+                    review_status=status_value,
+                    created_at=artifact.created_at,
+                )
+            )
+        return WikiPageArtifactListResult(
+            items=tuple(summaries),
+            limit=limit,
+            offset=offset,
+            has_more=has_more,
         )
 
 def _generation_lineage_matches(

@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 4, Slice 4.7 — Tenant-scoped WikiRAG review-status transitions.
+Current verified slice: Phase 4, Slice 4.8 — Tenant-scoped WikiRAG page listing.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 164 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 168 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -41,6 +41,7 @@ Current verified slice: Phase 4, Slice 4.7 — Tenant-scoped WikiRAG review-stat
 | Automated tests | Focused WikiRAG generation-persistence tests | 9 passed | verified | `uv run pytest apps/worker/tests/test_wiki_generation_artifacts.py` |
 | Automated tests | Focused WikiRAG page-read API tests | 7 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py` |
 | Automated tests | Focused WikiRAG review/RBAC tests | 23 passed | verified | `uv run pytest apps/api/tests/test_authorization.py apps/api/tests/test_wiki_pages.py` |
+| Automated tests | Focused WikiRAG page-listing tests | 4 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py -k 'list'` |
 | Automated tests | Focused OCR-boundary tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_ocr.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
 | Automated tests | Focused artifact-activation regression tests | 25 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
@@ -91,6 +92,7 @@ Current verified slice: Phase 4, Slice 4.7 — Tenant-scoped WikiRAG review-stat
 | WikiRAG | Composite page layers | 2 immutable layers (`WikiPage` skeleton + `WikiGenerationResult`) | verified | `WikiGeneratedPage` checksum/lineage contract and focused tests |
 | WikiRAG | Page read API | 1 authenticated tenant-scoped read endpoint with checksum/schema verification and success auditing | verified | `GET /api/v1/wiki/pages/{artifact_id}` and 7 focused API tests |
 | WikiRAG | Review state machine | 3 states with 4 allowed directed transitions plus idempotent same-state retries | verified | `POST /api/v1/wiki/pages/{artifact_id}/review`, compare-and-set repository update, and focused tests |
+| WikiRAG | Page listing API | 1 authenticated metadata-only listing endpoint with bounded pagination, status filtering, stable ordering, and success auditing | verified | `GET /api/v1/wiki/pages` and 4 focused listing tests |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
@@ -284,6 +286,8 @@ versions rather than pretending to have scale results.
 - Exposed **1 authenticated tenant-scoped WikiRAG page-read endpoint** that verifies object checksums and composite schema before returning page/generation data, maps foreign and missing artifacts to indistinguishable `404`s, and audits successful reads; verified with **7 focused API tests**, **155 local tests**, and **1 PostgreSQL integration test**. Listing, review transitions, regeneration, worker activation, and document-table RLS remain deferred.
 
 - Added a **3-state WikiRAG review workflow** with **1 dedicated RBAC permission**, **4 explicit transitions**, idempotent same-state retries, tenant-scoped compare-and-set concurrency protection, immutable object preservation, and atomic success auditing; verified with **9 review-focused tests**, **164 local tests**, and **1 PostgreSQL integration test**. Review history, comments, assignment, regeneration, worker activation, and document-table RLS remain deferred.
+
+- Added **1 authenticated metadata-only WikiRAG page-listing endpoint** with **2 bounded pagination controls**, server-side review filtering, deterministic ordering, `has_more` continuation, tenant exclusion, and success auditing without object-storage reads; verified with **4 focused listing tests**, **168 local tests**, and **1 PostgreSQL integration test**. Cursor pagination, review history, comments, assignment, regeneration, worker activation, and document-table RLS remain deferred.
 
 ### Future measured bullets
 

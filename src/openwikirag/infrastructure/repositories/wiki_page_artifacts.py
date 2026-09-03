@@ -34,6 +34,32 @@ class WikiPageArtifactRepository:
             ),
         )
 
+    async def list_page_artifacts(
+        self,
+        *,
+        tenant_id: UUID,
+        review_status: str | None,
+        limit: int,
+        offset: int,
+    ) -> list[WikiPageArtifact]:
+        """List page metadata inside one tenant and optional review state."""
+
+        statement = select(WikiPageArtifact).where(
+            WikiPageArtifact.tenant_id == tenant_id
+        )
+        if review_status is not None:
+            statement = statement.where(WikiPageArtifact.review_status == review_status)
+        statement = (
+            statement.order_by(
+                WikiPageArtifact.created_at.desc(),
+                WikiPageArtifact.id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self._session.scalars(statement)
+        return list(result.all())
+
     async def get_generation_artifact(
         self,
         *,

@@ -82,6 +82,8 @@ auditing. Authorized editors/admins can also move its mutable review metadata
 through `draft`, `needs_review`, and `approved` with compare-and-set protection
 and audit evidence, while the page object remains immutable. No real LLM call,
 worker activation, review history, or regeneration workflow is active yet.
+A metadata-only listing endpoint supports bounded pagination and review-status
+filtering without loading object-storage payloads.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
