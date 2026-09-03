@@ -1,10 +1,13 @@
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -122,6 +125,33 @@ class RecordingHandler:
             failure = self.failure
             self.failure = None
             raise failure
+
+
+def make_digital_pdf(*pages: str) -> bytes:
+    """Build a minimal digital PDF for the real artifact-ingestion handler test."""
+
+    writer = PdfWriter()
+    for text in pages:
+        page = writer.add_blank_page(width=612, height=792)
+        font = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+        page[NameObject("/Resources")] = DictionaryObject(
+            {
+                NameObject("/Font"): DictionaryObject({NameObject("/F1"): font}),
+            }
+        )
+        contents = DecodedStreamObject()
+        contents.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode())
+        page[NameObject("/Contents")] = contents
+
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 async def create_job(session: AsyncSession) -> tuple[Tenant, IngestionJob]:
@@ -410,7 +440,7 @@ async def test_claimed_job_owns_artifact_source_and_duplicate_delivery_recovers(
     assert artifacts[0].document_version_id == refreshed.document_version_id
 
 
-async def test_unsupported_source_is_dead_lettered_after_claim(
+async def test_malformed_pdf_is_dead_lettered_after_claim(
     session: AsyncSession,
     tmp_path: Path,
 ) -> None:
@@ -436,6 +466,38 @@ async def test_unsupported_source_is_dead_lettered_after_claim(
     assert refreshed.status == "dead_letter"
     assert refreshed.last_error_code == "INGESTION_PERMANENT_FAILURE"
     assert transport.dead_letters[0][1] == "INGESTION_PERMANENT_FAILURE"
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_digital_pdf_job_persists_a_page_provenanced_artifact(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="pdf",
+        data=make_digital_pdf("First page", "Second page"),
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    service = make_service(
+        session,
+        transport,
+        NormalizedArtifactIngestionHandler(session, storage),
+    )
+
+    assert await service.consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "succeeded"
+    artifact = await session.scalar(select(NormalizedDocumentArtifact))
+    assert artifact is not None
+    assert artifact.parser_name == "pypdf"
+    assert artifact.parser_version == "pypdf-6-page-text-v1"
+    assert artifact.span_count == 2
     assert transport.acknowledged == ["1-0"]
 
 

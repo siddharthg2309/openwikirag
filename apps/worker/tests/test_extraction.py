@@ -1,13 +1,19 @@
 """Proof for deterministic normalized-text extraction and provenance."""
 
+from io import BytesIO
+
 import pytest
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from openwikirag.application.extraction import (
     DEFAULT_EXTRACTOR_REGISTRY,
     DuplicateExtractorRegistrationError,
+    EncryptedPdfError,
     ExtractorRegistry,
     InvalidProvenanceError,
     InvalidTextEncodingError,
+    MalformedPdfError,
     MarkdownExtractor,
     NormalizedDocument,
     NoTextExtractedError,
@@ -15,6 +21,33 @@ from openwikirag.application.extraction import (
     SourceSpan,
     UnsupportedSourceTypeError,
 )
+
+
+def _digital_pdf(*pages: str) -> bytes:
+    """Build a minimal text PDF without introducing another runtime dependency."""
+
+    writer = PdfWriter()
+    for text in pages:
+        page = writer.add_blank_page(width=612, height=792)
+        font = DictionaryObject(
+            {
+                NameObject("/Type"): NameObject("/Font"),
+                NameObject("/Subtype"): NameObject("/Type1"),
+                NameObject("/BaseFont"): NameObject("/Helvetica"),
+            }
+        )
+        page[NameObject("/Resources")] = DictionaryObject(
+            {
+                NameObject("/Font"): DictionaryObject({NameObject("/F1"): font}),
+            }
+        )
+        contents = DecodedStreamObject()
+        contents.set_data(f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode())
+        page[NameObject("/Contents")] = contents
+
+    output = BytesIO()
+    writer.write(output)
+    return output.getvalue()
 
 
 def test_plain_text_is_deterministic_and_preserves_line_offset_mapping() -> None:
@@ -81,10 +114,56 @@ def test_parser_version_is_part_of_the_canonical_artifact_identity() -> None:
     assert first.checksum_sha256 != second.checksum_sha256
 
 
+def test_pdf_is_deterministic_and_preserves_page_level_provenance() -> None:
+    data = _digital_pdf("Alpha page", "Beta page")
+
+    first = DEFAULT_EXTRACTOR_REGISTRY.extract(source_type="pdf", data=data)
+    second = DEFAULT_EXTRACTOR_REGISTRY.extract(source_type="pdf", data=data)
+
+    assert first.text == "Alpha page\nBeta page"
+    assert first.canonical_bytes() == second.canonical_bytes()
+    assert first.checksum_sha256 == second.checksum_sha256
+    assert [
+        (
+            span.normalized_start_char,
+            span.normalized_end_char,
+            span.source_start_char,
+            span.source_end_char,
+            span.page_number,
+        )
+        for span in first.spans
+    ] == [
+        (0, 11, 0, 10, 1),
+        (11, 20, 0, 9, 2),
+    ]
+
+
+def test_pdf_rejects_malformed_encrypted_and_textless_inputs() -> None:
+    with pytest.raises(MalformedPdfError):
+        DEFAULT_EXTRACTOR_REGISTRY.extract(source_type="pdf", data=b"%PDF-1.7")
+
+    encrypted = PdfWriter()
+    encrypted.add_blank_page(width=612, height=792)
+    encrypted.encrypt("secret")
+    encrypted_bytes = BytesIO()
+    encrypted.write(encrypted_bytes)
+    with pytest.raises(EncryptedPdfError):
+        DEFAULT_EXTRACTOR_REGISTRY.extract(
+            source_type="pdf",
+            data=encrypted_bytes.getvalue(),
+        )
+
+    with pytest.raises(NoTextExtractedError):
+        DEFAULT_EXTRACTOR_REGISTRY.extract(
+            source_type="pdf",
+            data=_digital_pdf(" "),
+        )
+
+
 @pytest.mark.parametrize(
     ("source_type", "data", "error_type"),
     [
-        ("pdf", b"%PDF-1.7", UnsupportedSourceTypeError),
+        ("image", b"not an image", UnsupportedSourceTypeError),
         ("text", b"\xff", InvalidTextEncodingError),
         ("markdown", b" \r\n\t", NoTextExtractedError),
     ],

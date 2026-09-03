@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from openwikirag.application.extraction import InvalidTextEncodingError, UnsupportedSourceTypeError
+from openwikirag.application.extraction import InvalidTextEncodingError, MalformedPdfError
 from openwikirag.application.normalized_artifacts import (
     DocumentVersionNotFoundError,
     NormalizedArtifactConflictError,
@@ -191,7 +191,7 @@ async def test_extraction_failures_leave_no_normalized_metadata(
         source_type="pdf",
         data=b"%PDF-1.7",
     )
-    with pytest.raises(UnsupportedSourceTypeError):
+    with pytest.raises(MalformedPdfError):
         await service.persist(
             tenant_id=unsupported_tenant.id,
             document_version_id=unsupported_version.id,

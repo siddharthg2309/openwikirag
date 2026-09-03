@@ -16,6 +16,7 @@ dependencies = [
   "sqlalchemy[asyncio]>=2.0,<2.1",
   "structlog>=25.1,<26.0",
   "uvicorn[standard]>=0.34,<1.0",
+  "pypdf>=6.0,<7.0",
 ]
 
 [dependency-groups]

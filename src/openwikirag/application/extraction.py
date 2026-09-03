@@ -5,7 +5,11 @@ import json
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from io import BytesIO
 from typing import Protocol
+
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 NORMALIZED_DOCUMENT_SCHEMA_VERSION = "normalized-document-v1"
 
@@ -24,6 +28,14 @@ class DuplicateExtractorRegistrationError(ExtractionError):
 
 class InvalidTextEncodingError(ExtractionError):
     """Raised when a text-like source is not valid UTF-8."""
+
+
+class MalformedPdfError(ExtractionError):
+    """Raised when a PDF cannot be parsed or one page cannot be extracted."""
+
+
+class EncryptedPdfError(ExtractionError):
+    """Raised when extraction would require a password-handling policy."""
 
 
 class NoTextExtractedError(ExtractionError):
@@ -203,6 +215,67 @@ class MarkdownExtractor:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class PdfExtractor:
+    """Extract digital PDF text with deterministic page-level provenance."""
+
+    parser_version: str = "pypdf-6-page-text-v1"
+    source_type: str = "pdf"
+    parser_name: str = "pypdf"
+
+    def extract(self, data: bytes) -> NormalizedDocument:
+        try:
+            reader = PdfReader(BytesIO(data), strict=True)
+        except (OSError, PdfReadError, ValueError) as exc:
+            raise MalformedPdfError("The PDF could not be parsed.") from exc
+        if reader.is_encrypted:
+            raise EncryptedPdfError("Encrypted PDFs are not supported.")
+
+        pages: list[tuple[int, str, tuple[_LineSegment, ...]]] = []
+        try:
+            for page_number, page in enumerate(reader.pages, start=1):
+                extracted_text = page.extract_text() or ""
+                if not extracted_text.strip():
+                    continue
+                normalized_text, segments = _canonicalize_line_endings(extracted_text)
+                pages.append((page_number, normalized_text, segments))
+        except (OSError, PdfReadError, ValueError) as exc:
+            raise MalformedPdfError("A PDF page could not be extracted.") from exc
+
+        if not pages:
+            raise NoTextExtractedError("The PDF contains no extractable digital text.")
+
+        text_parts: list[str] = []
+        spans: list[SourceSpan] = []
+        normalized_offset = 0
+        for page_index, (page_number, page_text, segments) in enumerate(pages):
+            page_boundary = "" if page_text.endswith("\n") or page_index == len(pages) - 1 else "\n"
+            text_parts.append(page_text + page_boundary)
+            for segment_index, segment in enumerate(segments):
+                normalized_end = normalized_offset + segment.normalized_end_char
+                if page_boundary and segment_index == len(segments) - 1:
+                    normalized_end += len(page_boundary)
+                spans.append(
+                    SourceSpan(
+                        normalized_start_char=normalized_offset + segment.normalized_start_char,
+                        normalized_end_char=normalized_end,
+                        source_start_char=segment.source_start_char,
+                        source_end_char=segment.source_end_char,
+                        page_number=page_number,
+                        section_path=(),
+                    )
+                )
+            normalized_offset += len(page_text) + len(page_boundary)
+
+        return NormalizedDocument(
+            source_type=self.source_type,
+            parser_name=self.parser_name,
+            parser_version=self.parser_version,
+            text="".join(text_parts),
+            spans=tuple(spans),
+        )
+
+
 class ExtractorRegistry:
     """Select exactly one pure extractor for a validated document source type."""
 
@@ -224,7 +297,9 @@ class ExtractorRegistry:
         return extractor.extract(data)
 
 
-DEFAULT_EXTRACTOR_REGISTRY = ExtractorRegistry((PlainTextExtractor(), MarkdownExtractor()))
+DEFAULT_EXTRACTOR_REGISTRY = ExtractorRegistry(
+    (PlainTextExtractor(), MarkdownExtractor(), PdfExtractor())
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -26,8 +26,9 @@ uv run python -m apps.worker.app.main
 ```
 
 Use `--once` for one bounded relay/reclaim/consume cycle during local smoke
-checks. Until Phase 3 extraction exists, the worker deliberately dead-letters
-ingestion jobs instead of claiming that document processing succeeded.
+checks. The current worker produces deterministic normalized artifacts for
+UTF-8 text, Markdown, and text-bearing digital PDFs; DOCX, OCR, and scanned-PDF
+quality classification remain later slices.
 
 Then open:
 
@@ -57,8 +58,10 @@ opaque refresh token. Use the access token with `/api/v1/me`.
 
 Document intake currently validates and registers PDF, DOCX, Markdown, and
 UTF-8 text uploads. The raw bytes go to the configured local object root and
-PostgreSQL stores the document/version metadata plus a pending ingestion job;
-Redis delivery and extraction are the next phases.
+PostgreSQL stores the document/version metadata plus a pending ingestion job.
+The worker relays the outbox event through Redis Streams and currently extracts
+UTF-8 text, Markdown, and text-bearing digital PDFs into immutable normalized
+artifacts; DOCX and OCR are not active yet.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/documents \
