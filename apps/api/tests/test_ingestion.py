@@ -4,6 +4,8 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from uuid import UUID, uuid4
+from xml.sax.saxutils import escape
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from pypdf import PdfWriter
@@ -180,6 +182,25 @@ def make_digital_pdf(*pages: str) -> bytes:
 
     output = BytesIO()
     writer.write(output)
+    return output.getvalue()
+
+
+def make_docx(*paragraphs: str) -> bytes:
+    """Build the minimal OOXML package needed by the real handler test."""
+
+    namespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    body = "".join(
+        f'<w:p><w:r><w:t xml:space="preserve">{escape(paragraph)}</w:t></w:r></w:p>'
+        for paragraph in paragraphs
+    )
+    document_xml = (
+        f'<w:document xmlns:w="{namespace}">'
+        f"<w:body>{body}<w:sectPr/></w:body></w:document>"
+    ).encode()
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types/>")
+        archive.writestr("word/document.xml", document_xml)
     return output.getvalue()
 
 
@@ -527,6 +548,42 @@ async def test_digital_pdf_job_persists_a_page_provenanced_artifact(
     assert artifact.parser_name == "pypdf"
     assert artifact.parser_version == "pypdf-6-page-text-quality-v1"
     assert artifact.span_count == 2
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_docx_job_persists_a_normalized_artifact_before_ack(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="docx",
+        data=make_docx("Overview", "Body text"),
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    service = make_service(
+        session,
+        transport,
+        NormalizedArtifactIngestionHandler(session, storage),
+    )
+
+    assert await service.consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "succeeded"
+    artifact = await session.scalar(select(NormalizedDocumentArtifact))
+    assert artifact is not None
+    assert artifact.parser_name == "docx-xml"
+    assert artifact.parser_version == "ooxml-xml-v1"
+    assert artifact.span_count == 2
+    stored = json.loads(
+        (await storage.get(object_key=artifact.artifact_object_key)).decode("utf-8")
+    )
+    assert stored["text"] == "Overview\nBody text"
     assert transport.acknowledged == ["1-0"]
 
 

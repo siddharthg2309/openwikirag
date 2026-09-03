@@ -8,6 +8,7 @@ import structlog
 from openwikirag import __version__
 from openwikirag.application.extraction import (
     DEFAULT_EXTRACTOR_REGISTRY,
+    DocxExtractor,
     ExtractorRegistry,
     MarkdownExtractor,
     PdfExtractor,
@@ -55,6 +56,7 @@ def build_extractor_registry(settings: Settings) -> ExtractorRegistry:
             PlainTextExtractor(),
             MarkdownExtractor(),
             PdfExtractor(ocr_fallback=fallback),
+            DocxExtractor(),
         )
     )
 

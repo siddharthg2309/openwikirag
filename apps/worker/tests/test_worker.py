@@ -4,7 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 
 from apps.worker.app.main import build_extractor_registry
-from openwikirag.application.extraction import PdfExtractor
+from openwikirag.application.extraction import DocxExtractor, PdfExtractor
 from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import Settings
 
@@ -132,3 +132,5 @@ def test_worker_composition_keeps_ocr_opt_in() -> None:
     enabled_pdf = enabled.get(source_type="pdf")
     assert isinstance(enabled_pdf, PdfExtractor)
     assert enabled_pdf.ocr_fallback is not None
+    assert isinstance(disabled.get(source_type="docx"), DocxExtractor)
+    assert isinstance(enabled.get(source_type="docx"), DocxExtractor)

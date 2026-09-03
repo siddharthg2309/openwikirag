@@ -2,6 +2,8 @@
 
 from collections.abc import Sequence
 from io import BytesIO
+from xml.sax.saxutils import escape
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from pypdf import PdfWriter
@@ -9,12 +11,15 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from openwikirag.application.extraction import (
     DEFAULT_EXTRACTOR_REGISTRY,
+    DocxArchiveTooLargeError,
+    DocxExtractor,
     DuplicateExtractorRegistrationError,
     EncryptedPdfError,
     ExtractorRegistry,
     InvalidPdfTextQualityError,
     InvalidProvenanceError,
     InvalidTextEncodingError,
+    MalformedDocxError,
     MalformedPdfError,
     MarkdownExtractor,
     NormalizedDocument,
@@ -28,6 +33,8 @@ from openwikirag.application.extraction import (
     UnsupportedSourceTypeError,
 )
 from openwikirag.application.ocr import OcrPageResult
+
+_WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
 def _digital_pdf(*pages: str) -> bytes:
@@ -54,6 +61,30 @@ def _digital_pdf(*pages: str) -> bytes:
 
     output = BytesIO()
     writer.write(output)
+    return output.getvalue()
+
+
+def _docx_paragraph(text: str, *, style: str | None = None, content: str | None = None) -> str:
+    properties = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+    paragraph_content = (
+        content
+        if content is not None
+        else f'<w:r><w:t xml:space="preserve">{escape(text)}</w:t></w:r>'
+    )
+    return f"<w:p>{properties}{paragraph_content}</w:p>"
+
+
+def _docx_archive(document_body: str, *, extra: dict[str, bytes] | None = None) -> bytes:
+    document_xml = (
+        f'<w:document xmlns:w="{_WORD_NAMESPACE}">'
+        f"<w:body>{document_body}<w:sectPr/></w:body></w:document>"
+    ).encode()
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types/>")
+        archive.writestr("word/document.xml", document_xml)
+        for name, data in (extra or {}).items():
+            archive.writestr(name, data)
     return output.getvalue()
 
 
@@ -141,6 +172,109 @@ def test_parser_version_is_part_of_the_canonical_artifact_identity() -> None:
 
     assert first.text == second.text
     assert first.checksum_sha256 != second.checksum_sha256
+
+
+def test_docx_is_deterministic_and_preserves_heading_and_paragraph_provenance() -> None:
+    data = _docx_archive(
+        "".join(
+            (
+                _docx_paragraph("Overview", style="Heading1"),
+                _docx_paragraph(
+                    "",
+                    content=(
+                        "<w:r><w:t>Body</w:t><w:tab/><w:t>value</w:t>"
+                        "<w:br/><w:t>continued</w:t></w:r>"
+                    ),
+                ),
+                _docx_paragraph("Scope", style="Heading2"),
+                _docx_paragraph("Details"),
+                "<w:tbl><w:tr><w:tc>"
+                + _docx_paragraph("Table detail")
+                + "</w:tc></w:tr></w:tbl>",
+            )
+        )
+    )
+
+    first = DEFAULT_EXTRACTOR_REGISTRY.extract(source_type="docx", data=data)
+    second = DEFAULT_EXTRACTOR_REGISTRY.extract(source_type="docx", data=data)
+
+    assert first.text == "Overview\nBody\tvalue\ncontinued\nScope\nDetails\nTable detail"
+    assert first.parser_name == "docx-xml"
+    assert first.parser_version == "ooxml-xml-v1"
+    assert first.canonical_bytes() == second.canonical_bytes()
+    assert first.checksum_sha256 == second.checksum_sha256
+    assert [span.kind for span in first.spans] == [
+        "heading",
+        "text",
+        "heading",
+        "text",
+        "text",
+    ]
+    assert [span.section_path for span in first.spans] == [
+        ("Overview",),
+        ("Overview",),
+        ("Overview", "Scope"),
+        ("Overview", "Scope"),
+        ("Overview", "Scope"),
+    ]
+    assert [
+        (span.normalized_start_char, span.normalized_end_char)
+        for span in first.spans
+    ] == [(0, 8), (8, 29), (29, 35), (35, 43), (43, 56)]
+    assert first.spans[-1].source_start_char == first.spans[-1].normalized_start_char
+    assert first.spans[-1].normalized_end_char == len(first.text)
+
+
+def test_docx_excludes_deleted_text_and_blank_paragraphs() -> None:
+    data = _docx_archive(
+        "".join(
+            (
+                _docx_paragraph(
+                    "",
+                    content=(
+                        "<w:del><w:r><w:delText>deleted</w:delText></w:r></w:del>"
+                        "<w:r><w:t>kept</w:t></w:r>"
+                    ),
+                ),
+                _docx_paragraph(" \t", content="<w:r><w:tab/></w:r>"),
+            )
+        )
+    )
+
+    document = DocxExtractor().extract(data)
+
+    assert document.text == "kept"
+    assert len(document.spans) == 1
+    assert document.spans[0].kind == "text"
+
+
+def test_docx_rejects_malformed_missing_blank_and_oversized_inputs() -> None:
+    with pytest.raises(MalformedDocxError):
+        DocxExtractor().extract(b"not a zip")
+
+    missing_main_part = BytesIO()
+    with ZipFile(missing_main_part, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types/>")
+    with pytest.raises(MalformedDocxError, match="missing a required"):
+        DocxExtractor().extract(missing_main_part.getvalue())
+
+    blank_docx = _docx_archive(_docx_paragraph(" \t"))
+    with pytest.raises(NoTextExtractedError):
+        DocxExtractor().extract(blank_docx)
+
+    oversized_docx = _docx_archive("", extra={"word/media/image.bin": b"x" * 128})
+    with pytest.raises(DocxArchiveTooLargeError):
+        DocxExtractor(max_uncompressed_bytes=64).extract(oversized_docx)
+
+
+def test_docx_rejects_invalid_main_document_xml() -> None:
+    output = BytesIO()
+    with ZipFile(output, "w", ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", b"<Types/>")
+        archive.writestr("word/document.xml", b"<not-xml")
+
+    with pytest.raises(MalformedDocxError, match="XML is invalid"):
+        DocxExtractor().extract(output.getvalue())
 
 
 def test_pdf_quality_classifier_labels_page_coverage_deterministically() -> None:

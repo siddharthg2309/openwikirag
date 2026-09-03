@@ -23,24 +23,24 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 3, Slice 3.7 — Activate OCR fallback in normalized PDF artifacts.
+Current verified slice: Phase 3, Slice 3.8 — Activate deterministic DOCX extraction.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 106 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 111 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
 | Automated tests | Focused ingestion lifecycle tests | 6 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py` |
 | Automated tests | Focused job-progress API tests | 8 passed | verified | `uv run pytest apps/api/tests/test_jobs.py` |
 | Automated tests | Focused worker lifecycle tests | 4 passed | verified | `uv run pytest apps/worker/tests/test_worker.py` |
-| Automated tests | Focused extraction/provenance/quality/OCR-merge tests | 15 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
+| Automated tests | Focused extraction/provenance/quality/OCR-merge/DOCX tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
 | Automated tests | Focused OCR-boundary tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_ocr.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
-| Automated tests | Focused artifact-activation regression tests | 24 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
+| Automated tests | Focused artifact-activation regression tests | 25 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 54 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 56 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0005_normalized_artifacts` | verified | Fresh PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Migration drift | No new upgrade operations | verified | `uv run alembic check` |
@@ -62,17 +62,19 @@ Current verified slice: Phase 3, Slice 3.7 — Activate OCR fallback in normaliz
 | Worker | Real Markdown artifact-processing smoke test | 1 Markdown job: published 1, reclaimed 0, consumed 1, succeeded 1 | verified | Fresh PostgreSQL 16 + Redis 7 Slice 3.3 experiment |
 | Worker | Real PDF artifact-processing smoke test | 1 two-page PDF job: published 1, reclaimed 0, consumed 1, succeeded 1 | verified | Fresh PostgreSQL 16 + Redis 7 Slice 3.4 experiment |
 | Worker | Real PDF quality-classification smoke test | 1 three-page mixed PDF job: published 1, reclaimed 0, consumed 1, succeeded 1; quality `partial`, OCR handoff `true` | verified | Fresh PostgreSQL 16 + Redis 7 Slice 3.5 experiment |
-| Extraction | Deterministic source types | 3 (UTF-8 text, Markdown, text-bearing digital PDF) | verified | `DEFAULT_EXTRACTOR_REGISTRY` and extraction tests |
+| Extraction | Deterministic source types | 4 (UTF-8 text, Markdown, text-bearing digital PDF, DOCX) | verified | `DEFAULT_EXTRACTOR_REGISTRY` and extraction tests |
 | Extraction | Provenance coverage invariant | 100% of normalized characters covered by contiguous spans | verified | `NormalizedDocument` validation and extraction tests |
 | Extraction | PDF page provenance | 2 page-numbered spans over a two-page digital-PDF fixture | verified | `apps/worker/tests/test_extraction.py` and Slice 3.4 smoke check |
 | Extraction | PDF quality states | 3 deterministic states (`sufficient`, `partial`, `empty`) with `needs_ocr` handoff | verified | `PdfTextQualityClassifier` tests and Slice 3.5 smoke check |
 | Extraction | Mixed-PDF quality signal | 2 of 3 pages text-bearing; partial artifact retains page spans `[1, 3]` and sets `needs_ocr=true` | verified | Slice 3.5 worker smoke check |
 | Extraction | Durable artifact identity | 1 immutable metadata row per document-version/parser identity | verified | Database unique constraint and persistence tests |
-| Extraction | Active worker source types | 3 (UTF-8 text, Markdown, text-bearing digital PDF) | verified | Concrete worker handler, lifecycle tests, and Slice 3.4 smoke test |
+| Extraction | Active worker source types | 4 (UTF-8 text, Markdown, text-bearing digital PDF, DOCX) | verified | Concrete worker handler, composition tests, and artifact-consumer tests |
+| Extraction | DOCX parser contract | 1 bounded standard-library OOXML parser with paragraph, heading, tab, break, and deleted-text semantics | verified | `apps/worker/tests/test_extraction.py`; no external parser dependency |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
 | Extraction | OCR-enriched merge proof | 1 mixed three-page fixture; only the missing page was OCR-routed and recovered | verified | Fake OCR extraction and consumer tests |
 | Worker | OCR-enabled consumer path | 1 mixed PDF job succeeded with fake OCR; acknowledged after artifact/job commit | verified | `apps/api/tests/test_ingestion.py` |
+| Worker | DOCX artifact-processing consumer path | 1 SQLite-backed DOCX job succeeded with artifact commit before acknowledgement | verified | `apps/api/tests/test_ingestion.py` |
 | Integration | Native OCR runtime availability | Poppler render verified; Tesseract unavailable on verification host | unverified | Real generated-PDF Poppler check; `command -v tesseract` absent |
 
 The current suite count includes the PostgreSQL integration test only when its
@@ -233,9 +235,9 @@ versions rather than pretending to have scale results.
 
 - Added an authenticated tenant-scoped job-progress API backed by PostgreSQL canonical state, coarse lifecycle progress mapping, safe cross-tenant `404` behavior, and audited reads; verified with **8 focused API tests** and **1 PostgreSQL 16 integration test**.
 
-- Wired a runnable asynchronous worker around the transactional outbox and Redis consumer-group services with ordered relay/reclaim/consume cycles, idle/error backoff, graceful signal shutdown, finite `--once` smoke mode, and deterministic artifact extraction for **3 source types**; verified with **4 worker tests** and fresh PostgreSQL 16 + Redis 7 Markdown/PDF smoke runs.
+- Wired a runnable asynchronous worker around the transactional outbox and Redis consumer-group services with ordered relay/reclaim/consume cycles, idle/error backoff, graceful signal shutdown, finite `--once` smoke mode, and deterministic artifact extraction for **4 source types**; verified with **4 worker tests** and fresh PostgreSQL 16 + Redis 7 Markdown/PDF smoke runs.
 
-- Established a deterministic extraction contract for **3 source types** (UTF-8 text, Markdown, and text-bearing digital PDF), preserving source/normalized character offsets, Markdown heading paths, PDF page provenance, and parser-versioned SHA-256 artifacts; verified with **12 extraction/provenance/quality tests**.
+- Established a deterministic extraction contract for **4 source types** (UTF-8 text, Markdown, text-bearing digital PDF, and DOCX), preserving source/normalized character offsets, Markdown/DOCX heading paths, PDF page provenance, and parser-versioned SHA-256 artifacts; verified with **19 extraction/provenance/quality/OCR/DOCX tests**.
 
 - Added page-provenanced digital-PDF extraction with `pypdf`, typed malformed/encrypted/textless failure handling, and immutable artifact integration; verified with **21 ingestion/worker/artifact regression tests** plus a real two-page PostgreSQL 16 + Redis 7 worker smoke.
 
@@ -244,6 +246,8 @@ versions rather than pretending to have scale results.
 - Added a bounded page-level OCR seam with replaceable renderer/engine ports, Poppler/Tesseract CLI adapters, temporary-file cleanup, structured no-shell execution, and typed timeout/provider failures; verified with **19 focused tests**. Native Tesseract execution and worker activation remain unverified.
 
 - Activated opt-in PDF OCR for pages without usable digital text, preserving digital/OCR provenance and immutable `pypdf-ocr` artifact identity; verified with **6 new fake-provider extraction, consumer, and composition tests**. Native Tesseract execution remains unverified.
+
+- Activated deterministic DOCX ingestion with a bounded standard-library OOXML parser, paragraph/run extraction, heading-derived section paths, tab/break preservation, deleted-text exclusion, and permanent malformed/oversized failure handling; verified with **4 focused parser tests**, **1 consumer persistence test**, and **111 local tests** overall. No external dependency or migration was added.
 
 ### Future measured bullets
 

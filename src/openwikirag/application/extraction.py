@@ -3,10 +3,12 @@
 import hashlib
 import json
 import re
+import zipfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Literal, Protocol
+from xml.etree import ElementTree
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -35,6 +37,14 @@ class InvalidTextEncodingError(ExtractionError):
 
 class MalformedPdfError(ExtractionError):
     """Raised when a PDF cannot be parsed or one page cannot be extracted."""
+
+
+class MalformedDocxError(ExtractionError):
+    """Raised when a DOCX package or its main document part is invalid."""
+
+
+class DocxArchiveTooLargeError(ExtractionError):
+    """Raised before parsing when a DOCX archive exceeds the safety bound."""
 
 
 class EncryptedPdfError(ExtractionError):
@@ -470,6 +480,110 @@ class PdfExtractor:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class DocxExtractor:
+    """Extract deterministic paragraph text and heading paths from DOCX OOXML."""
+
+    parser_version: str = "ooxml-xml-v1"
+    source_type: str = "docx"
+    parser_name: str = "docx-xml"
+    max_uncompressed_bytes: int = 50 * 1024 * 1024
+
+    def __post_init__(self) -> None:
+        if self.max_uncompressed_bytes <= 0:
+            raise ValueError("DOCX archive size limit must be positive.")
+
+    def extract(self, data: bytes) -> NormalizedDocument:
+        if not isinstance(data, bytes) or not data:
+            raise MalformedDocxError("The DOCX package is empty or invalid.")
+
+        try:
+            with zipfile.ZipFile(BytesIO(data), "r") as archive:
+                total_uncompressed_bytes = sum(
+                    info.file_size for info in archive.infolist()
+                )
+                if total_uncompressed_bytes > self.max_uncompressed_bytes:
+                    raise DocxArchiveTooLargeError(
+                        "The DOCX archive exceeds the uncompressed size limit."
+                    )
+
+                names = {info.filename for info in archive.infolist()}
+                required_parts = {"[Content_Types].xml", "word/document.xml"}
+                if not required_parts.issubset(names):
+                    raise MalformedDocxError(
+                        "The DOCX package is missing a required OOXML part."
+                    )
+                document_info = archive.getinfo("word/document.xml")
+                if document_info.is_dir():
+                    raise MalformedDocxError("The DOCX main document part is a directory.")
+                document_xml = archive.read(document_info)
+        except DocxArchiveTooLargeError:
+            raise
+        except MalformedDocxError:
+            raise
+        except (KeyError, OSError, RuntimeError, zipfile.BadZipFile) as exc:
+            raise MalformedDocxError("The DOCX package could not be read.") from exc
+
+        if len(document_xml) > self.max_uncompressed_bytes:
+            raise DocxArchiveTooLargeError(
+                "The DOCX main document part exceeds the uncompressed size limit."
+            )
+        try:
+            root = ElementTree.fromstring(document_xml)
+        except (ElementTree.ParseError, ValueError) as exc:
+            raise MalformedDocxError("The DOCX main document XML is invalid.") from exc
+
+        body = root.find(f"{_WORD_TAG}body")
+        if body is None:
+            raise MalformedDocxError("The DOCX main document has no body.")
+        return self._build_document(body.iter(f"{_WORD_TAG}p"))
+
+    def _build_document(
+        self,
+        paragraphs: Iterable[ElementTree.Element],
+    ) -> NormalizedDocument:
+        text_parts: list[str] = []
+        spans: list[SourceSpan] = []
+        section_path: list[str] = []
+        logical_offset = 0
+
+        for paragraph in paragraphs:
+            paragraph_text = _docx_paragraph_text(paragraph)
+            if not paragraph_text.strip():
+                continue
+
+            heading_level = _docx_heading_level(paragraph)
+            kind = "text"
+            if heading_level is not None:
+                section_path = section_path[: heading_level - 1]
+                section_path.append(paragraph_text.strip())
+                kind = "heading"
+
+            segment_text = ("\n" if text_parts else "") + paragraph_text
+            segment_end = logical_offset + len(segment_text)
+            text_parts.append(segment_text)
+            spans.append(
+                SourceSpan(
+                    normalized_start_char=logical_offset,
+                    normalized_end_char=segment_end,
+                    source_start_char=logical_offset,
+                    source_end_char=segment_end,
+                    page_number=None,
+                    section_path=tuple(section_path),
+                    kind=kind,
+                )
+            )
+            logical_offset = segment_end
+
+        return NormalizedDocument(
+            source_type=self.source_type,
+            parser_name=self.parser_name,
+            parser_version=self.parser_version,
+            text="".join(text_parts),
+            spans=tuple(spans),
+        )
+
+
 class ExtractorRegistry:
     """Select exactly one pure extractor for a validated document source type."""
 
@@ -497,7 +611,7 @@ class ExtractorRegistry:
 
 
 DEFAULT_EXTRACTOR_REGISTRY = ExtractorRegistry(
-    (PlainTextExtractor(), MarkdownExtractor(), PdfExtractor())
+    (PlainTextExtractor(), MarkdownExtractor(), PdfExtractor(), DocxExtractor())
 )
 
 
@@ -511,6 +625,41 @@ class _LineSegment:
 
 _LINE_ENDING = re.compile(r"\r\n|\r|\n")
 _ATX_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
+_WORD_NAMESPACE = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_WORD_TAG = f"{{{_WORD_NAMESPACE}}}"
+_WORD_HEADING = re.compile(r"^heading\s*([1-9])$")
+
+
+def _docx_paragraph_text(paragraph: ElementTree.Element) -> str:
+    """Collect supported run content while excluding deleted revisions."""
+
+    return _docx_element_text(paragraph)
+
+
+def _docx_element_text(element: ElementTree.Element) -> str:
+    if element.tag == f"{_WORD_TAG}del":
+        return ""
+    if element.tag in {f"{_WORD_TAG}delText", f"{_WORD_TAG}instrText"}:
+        return ""
+    if element.tag == f"{_WORD_TAG}t":
+        return element.text or ""
+    if element.tag == f"{_WORD_TAG}tab":
+        return "\t"
+    if element.tag in {f"{_WORD_TAG}br", f"{_WORD_TAG}cr"}:
+        return "\n"
+    return "".join(_docx_element_text(child) for child in element)
+
+
+def _docx_heading_level(paragraph: ElementTree.Element) -> int | None:
+    properties = paragraph.find(f"{_WORD_TAG}pPr")
+    if properties is None:
+        return None
+    style = properties.find(f"{_WORD_TAG}pStyle")
+    if style is None:
+        return None
+    value = (style.get(f"{_WORD_TAG}val") or "").casefold()
+    match = _WORD_HEADING.fullmatch(value)
+    return int(match.group(1)) if match is not None else None
 
 
 def _decode_and_canonicalize(data: bytes) -> tuple[str, tuple[_LineSegment, ...]]:
