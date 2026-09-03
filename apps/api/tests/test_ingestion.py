@@ -496,7 +496,7 @@ async def test_digital_pdf_job_persists_a_page_provenanced_artifact(
     artifact = await session.scalar(select(NormalizedDocumentArtifact))
     assert artifact is not None
     assert artifact.parser_name == "pypdf"
-    assert artifact.parser_version == "pypdf-6-page-text-v1"
+    assert artifact.parser_version == "pypdf-6-page-text-quality-v1"
     assert artifact.span_count == 2
     assert transport.acknowledged == ["1-0"]
 

@@ -3,15 +3,16 @@
 import hashlib
 import json
 import re
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
 from io import BytesIO
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
 NORMALIZED_DOCUMENT_SCHEMA_VERSION = "normalized-document-v1"
+type PdfTextQualityStatus = Literal["sufficient", "partial", "empty"]
 
 
 class ExtractionError(Exception):
@@ -44,6 +45,102 @@ class NoTextExtractedError(ExtractionError):
 
 class InvalidProvenanceError(ExtractionError):
     """Raised when spans cannot safely describe the normalized text."""
+
+
+class InvalidPdfTextQualityError(ExtractionError):
+    """Raised when a PDF quality assessment violates its count invariants."""
+
+
+@dataclass(frozen=True, slots=True)
+class PdfTextQualityAssessment:
+    """Deterministic page-coverage signal for a parsed PDF."""
+
+    status: PdfTextQualityStatus
+    page_count: int
+    text_page_count: int
+    character_count: int
+    non_whitespace_character_count: int
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if self.page_count < 0:
+            raise InvalidPdfTextQualityError("PDF page count cannot be negative.")
+        if self.text_page_count < 0 or self.text_page_count > self.page_count:
+            raise InvalidPdfTextQualityError("PDF text-page count is inconsistent.")
+        if self.character_count < 0:
+            raise InvalidPdfTextQualityError("PDF character count cannot be negative.")
+        if (
+            self.non_whitespace_character_count < 0
+            or self.non_whitespace_character_count > self.character_count
+        ):
+            raise InvalidPdfTextQualityError("PDF non-whitespace count is inconsistent.")
+
+        expected_status: PdfTextQualityStatus
+        expected_reasons: tuple[str, ...]
+        if self.text_page_count == 0:
+            expected_status = "empty"
+            expected_reasons = ("NO_EXTRACTED_TEXT",)
+        elif self.text_page_count == self.page_count:
+            expected_status = "sufficient"
+            expected_reasons = ()
+        else:
+            expected_status = "partial"
+            expected_reasons = ("PAGES_WITHOUT_EXTRACTED_TEXT",)
+        if self.status != expected_status or self.reason_codes != expected_reasons:
+            raise InvalidPdfTextQualityError("PDF quality status does not match its counts.")
+
+    @property
+    def needs_ocr(self) -> bool:
+        """Return whether a later OCR stage may need to process missing text."""
+
+        return self.status != "sufficient"
+
+    def canonical_payload(self) -> dict[str, object]:
+        """Return the stable JSON representation embedded in PDF artifacts."""
+
+        return {
+            "status": self.status,
+            "page_count": self.page_count,
+            "text_page_count": self.text_page_count,
+            "character_count": self.character_count,
+            "non_whitespace_character_count": self.non_whitespace_character_count,
+            "reason_codes": list(self.reason_codes),
+            "needs_ocr": self.needs_ocr,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PdfTextQualityClassifier:
+    """Classify PDF extraction quality using page coverage only."""
+
+    def classify(self, *, page_texts: Sequence[str]) -> PdfTextQualityAssessment:
+        """Return a quality assessment derived from normalized page observations."""
+
+        if any(not isinstance(page_text, str) for page_text in page_texts):
+            raise InvalidPdfTextQualityError("PDF page observations must be text strings.")
+        text_page_count = sum(bool(page_text.strip()) for page_text in page_texts)
+        character_count = sum(len(page_text) for page_text in page_texts)
+        non_whitespace_character_count = sum(
+            sum(not character.isspace() for character in page_text) for page_text in page_texts
+        )
+        reason_codes: tuple[str, ...]
+        if text_page_count == 0:
+            status: PdfTextQualityStatus = "empty"
+            reason_codes = ("NO_EXTRACTED_TEXT",)
+        elif text_page_count == len(page_texts):
+            status = "sufficient"
+            reason_codes = ()
+        else:
+            status = "partial"
+            reason_codes = ("PAGES_WITHOUT_EXTRACTED_TEXT",)
+        return PdfTextQualityAssessment(
+            status=status,
+            page_count=len(page_texts),
+            text_page_count=text_page_count,
+            character_count=character_count,
+            non_whitespace_character_count=non_whitespace_character_count,
+            reason_codes=reason_codes,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +179,7 @@ class NormalizedDocument:
     parser_version: str
     text: str
     spans: tuple[SourceSpan, ...]
+    quality: PdfTextQualityAssessment | None = None
 
     def __post_init__(self) -> None:
         if not self.source_type or not self.parser_name or not self.parser_version:
@@ -106,7 +204,7 @@ class NormalizedDocument:
     def canonical_payload(self) -> dict[str, object]:
         """Return an intentionally stable artifact representation for persistence."""
 
-        return {
+        payload: dict[str, object] = {
             "schema_version": NORMALIZED_DOCUMENT_SCHEMA_VERSION,
             "source_type": self.source_type,
             "parser_name": self.parser_name,
@@ -125,6 +223,9 @@ class NormalizedDocument:
                 for span in self.spans
             ],
         }
+        if self.quality is not None:
+            payload["quality"] = self.quality.canonical_payload()
+        return payload
 
     def canonical_bytes(self) -> bytes:
         """Serialize deterministically so parser artifacts are reproducible."""
@@ -219,9 +320,12 @@ class MarkdownExtractor:
 class PdfExtractor:
     """Extract digital PDF text with deterministic page-level provenance."""
 
-    parser_version: str = "pypdf-6-page-text-v1"
+    parser_version: str = "pypdf-6-page-text-quality-v1"
     source_type: str = "pdf"
     parser_name: str = "pypdf"
+    quality_classifier: PdfTextQualityClassifier = field(
+        default_factory=PdfTextQualityClassifier
+    )
 
     def extract(self, data: bytes) -> NormalizedDocument:
         try:
@@ -232,18 +336,21 @@ class PdfExtractor:
             raise EncryptedPdfError("Encrypted PDFs are not supported.")
 
         pages: list[tuple[int, str, tuple[_LineSegment, ...]]] = []
+        page_texts: list[str] = []
         try:
             for page_number, page in enumerate(reader.pages, start=1):
                 extracted_text = page.extract_text() or ""
+                normalized_text, segments = _canonicalize_line_endings(extracted_text)
+                page_texts.append(normalized_text)
                 if not extracted_text.strip():
                     continue
-                normalized_text, segments = _canonicalize_line_endings(extracted_text)
                 pages.append((page_number, normalized_text, segments))
         except (OSError, PdfReadError, ValueError) as exc:
             raise MalformedPdfError("A PDF page could not be extracted.") from exc
 
         if not pages:
             raise NoTextExtractedError("The PDF contains no extractable digital text.")
+        quality = self.quality_classifier.classify(page_texts=page_texts)
 
         text_parts: list[str] = []
         spans: list[SourceSpan] = []
@@ -273,6 +380,7 @@ class PdfExtractor:
             parser_version=self.parser_version,
             text="".join(text_parts),
             spans=tuple(spans),
+            quality=quality,
         )
 
 

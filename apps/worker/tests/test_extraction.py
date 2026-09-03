@@ -11,12 +11,15 @@ from openwikirag.application.extraction import (
     DuplicateExtractorRegistrationError,
     EncryptedPdfError,
     ExtractorRegistry,
+    InvalidPdfTextQualityError,
     InvalidProvenanceError,
     InvalidTextEncodingError,
     MalformedPdfError,
     MarkdownExtractor,
     NormalizedDocument,
     NoTextExtractedError,
+    PdfTextQualityAssessment,
+    PdfTextQualityClassifier,
     PlainTextExtractor,
     SourceSpan,
     UnsupportedSourceTypeError,
@@ -114,6 +117,42 @@ def test_parser_version_is_part_of_the_canonical_artifact_identity() -> None:
     assert first.checksum_sha256 != second.checksum_sha256
 
 
+def test_pdf_quality_classifier_labels_page_coverage_deterministically() -> None:
+    classifier = PdfTextQualityClassifier()
+
+    sufficient = classifier.classify(page_texts=("First\n", "Second\n"))
+    assert sufficient.status == "sufficient"
+    assert sufficient.page_count == 2
+    assert sufficient.text_page_count == 2
+    assert sufficient.character_count == 13
+    assert sufficient.non_whitespace_character_count == 11
+    assert sufficient.reason_codes == ()
+    assert sufficient.needs_ocr is False
+
+    partial = classifier.classify(page_texts=("First\n", "", "Third\n"))
+    assert partial.status == "partial"
+    assert partial.page_count == 3
+    assert partial.text_page_count == 2
+    assert partial.reason_codes == ("PAGES_WITHOUT_EXTRACTED_TEXT",)
+    assert partial.needs_ocr is True
+
+    empty = classifier.classify(page_texts=(" ", "\n"))
+    assert empty.status == "empty"
+    assert empty.text_page_count == 0
+    assert empty.reason_codes == ("NO_EXTRACTED_TEXT",)
+    assert empty.needs_ocr is True
+
+    with pytest.raises(InvalidPdfTextQualityError):
+        PdfTextQualityAssessment(
+            status="sufficient",
+            page_count=2,
+            text_page_count=1,
+            character_count=1,
+            non_whitespace_character_count=1,
+            reason_codes=(),
+        )
+
+
 def test_pdf_is_deterministic_and_preserves_page_level_provenance() -> None:
     data = _digital_pdf("Alpha page", "Beta page")
 
@@ -123,6 +162,18 @@ def test_pdf_is_deterministic_and_preserves_page_level_provenance() -> None:
     assert first.text == "Alpha page\nBeta page"
     assert first.canonical_bytes() == second.canonical_bytes()
     assert first.checksum_sha256 == second.checksum_sha256
+    assert first.quality is not None
+    assert first.quality.status == "sufficient"
+    assert first.quality.needs_ocr is False
+    assert first.canonical_payload()["quality"] == {
+        "status": "sufficient",
+        "page_count": 2,
+        "text_page_count": 2,
+        "character_count": 19,
+        "non_whitespace_character_count": 17,
+        "reason_codes": [],
+        "needs_ocr": False,
+    }
     assert [
         (
             span.normalized_start_char,
@@ -136,6 +187,21 @@ def test_pdf_is_deterministic_and_preserves_page_level_provenance() -> None:
         (0, 11, 0, 10, 1),
         (11, 20, 0, 9, 2),
     ]
+
+
+def test_pdf_with_empty_pages_retains_text_and_marks_ocr_needed() -> None:
+    document = DEFAULT_EXTRACTOR_REGISTRY.extract(
+        source_type="pdf",
+        data=_digital_pdf("First page", "", "Third page"),
+    )
+
+    assert document.text == "First page\nThird page"
+    assert document.quality is not None
+    assert document.quality.status == "partial"
+    assert document.quality.page_count == 3
+    assert document.quality.text_page_count == 2
+    assert document.quality.needs_ocr is True
+    assert [span.page_number for span in document.spans] == [1, 3]
 
 
 def test_pdf_rejects_malformed_encrypted_and_textless_inputs() -> None:

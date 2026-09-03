@@ -23,18 +23,18 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 3, Slice 3.4 — Deterministic digital-PDF extraction with page provenance.
+Current verified slice: Phase 3, Slice 3.5 — Deterministic PDF text-quality classification.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 79 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 81 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
 | Automated tests | Focused ingestion lifecycle tests | 6 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py` |
 | Automated tests | Focused job-progress API tests | 8 passed | verified | `uv run pytest apps/api/tests/test_jobs.py` |
 | Automated tests | Focused worker lifecycle tests | 4 passed | verified | `uv run pytest apps/worker/tests/test_worker.py` |
-| Automated tests | Focused extraction/provenance tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
+| Automated tests | Focused extraction/provenance/quality tests | 12 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
 | Automated tests | Focused artifact-activation regression tests | 21 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
@@ -60,9 +60,12 @@ Current verified slice: Phase 3, Slice 3.4 — Deterministic digital-PDF extract
 | Worker | Real finite-cycle smoke test | 1 successful `--once` run against PostgreSQL 16 + Redis 7 | verified | `uv run python -m apps.worker.app.main --once` with isolated dependency URLs |
 | Worker | Real Markdown artifact-processing smoke test | 1 Markdown job: published 1, reclaimed 0, consumed 1, succeeded 1 | verified | Fresh PostgreSQL 16 + Redis 7 Slice 3.3 experiment |
 | Worker | Real PDF artifact-processing smoke test | 1 two-page PDF job: published 1, reclaimed 0, consumed 1, succeeded 1 | verified | Fresh PostgreSQL 16 + Redis 7 Slice 3.4 experiment |
+| Worker | Real PDF quality-classification smoke test | 1 three-page mixed PDF job: published 1, reclaimed 0, consumed 1, succeeded 1; quality `partial`, OCR handoff `true` | verified | Fresh PostgreSQL 16 + Redis 7 Slice 3.5 experiment |
 | Extraction | Deterministic source types | 3 (UTF-8 text, Markdown, text-bearing digital PDF) | verified | `DEFAULT_EXTRACTOR_REGISTRY` and extraction tests |
 | Extraction | Provenance coverage invariant | 100% of normalized characters covered by contiguous spans | verified | `NormalizedDocument` validation and extraction tests |
 | Extraction | PDF page provenance | 2 page-numbered spans over a two-page digital-PDF fixture | verified | `apps/worker/tests/test_extraction.py` and Slice 3.4 smoke check |
+| Extraction | PDF quality states | 3 deterministic states (`sufficient`, `partial`, `empty`) with `needs_ocr` handoff | verified | `PdfTextQualityClassifier` tests and Slice 3.5 smoke check |
+| Extraction | Mixed-PDF quality signal | 2 of 3 pages text-bearing; partial artifact retains page spans `[1, 3]` and sets `needs_ocr=true` | verified | Slice 3.5 worker smoke check |
 | Extraction | Durable artifact identity | 1 immutable metadata row per document-version/parser identity | verified | Database unique constraint and persistence tests |
 | Extraction | Active worker source types | 3 (UTF-8 text, Markdown, text-bearing digital PDF) | verified | Concrete worker handler, lifecycle tests, and Slice 3.4 smoke test |
 
@@ -226,9 +229,11 @@ versions rather than pretending to have scale results.
 
 - Wired a runnable asynchronous worker around the transactional outbox and Redis consumer-group services with ordered relay/reclaim/consume cycles, idle/error backoff, graceful signal shutdown, finite `--once` smoke mode, and deterministic artifact extraction for **3 source types**; verified with **4 worker tests** and fresh PostgreSQL 16 + Redis 7 Markdown/PDF smoke runs.
 
-- Established a deterministic extraction contract for **3 source types** (UTF-8 text, Markdown, and text-bearing digital PDF), preserving source/normalized character offsets, Markdown heading paths, and PDF page provenance with parser-versioned SHA-256 artifacts; verified with **10 extraction/provenance tests**.
+- Established a deterministic extraction contract for **3 source types** (UTF-8 text, Markdown, and text-bearing digital PDF), preserving source/normalized character offsets, Markdown heading paths, PDF page provenance, and parser-versioned SHA-256 artifacts; verified with **12 extraction/provenance/quality tests**.
 
 - Added page-provenanced digital-PDF extraction with `pypdf`, typed malformed/encrypted/textless failure handling, and immutable artifact integration; verified with **21 ingestion/worker/artifact regression tests** plus a real two-page PostgreSQL 16 + Redis 7 worker smoke.
+
+- Added explainable PDF page-coverage classification with **3 quality states** and a deterministic `needs_ocr` handoff, preserving usable text from mixed PDFs while deferring OCR execution; verified with a real three-page PostgreSQL 16 + Redis 7 worker smoke.
 
 ### Future measured bullets
 

@@ -61,7 +61,8 @@ UTF-8 text uploads. The raw bytes go to the configured local object root and
 PostgreSQL stores the document/version metadata plus a pending ingestion job.
 The worker relays the outbox event through Redis Streams and currently extracts
 UTF-8 text, Markdown, and text-bearing digital PDFs into immutable normalized
-artifacts; DOCX and OCR are not active yet.
+artifacts. PDF artifacts also record deterministic page-coverage quality
+metadata and a future-OCR handoff signal; DOCX and OCR are not active yet.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/v1/documents \
