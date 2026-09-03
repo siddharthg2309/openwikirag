@@ -83,10 +83,14 @@ through `draft`, `needs_review`, and `approved` with compare-and-set protection
 and audit evidence, while the page object remains immutable. The durable worker
 now activates the complete deterministic path from normalized artifact through
 metadata, page skeleton, structured-generation validation, generation artifact,
-and self-contained page artifact before acknowledging Redis. Its local baseline
-provider is intentionally deterministic and title-grounded; no live LLM call,
-review history, or regeneration workflow is active yet. A metadata-only listing
-endpoint supports bounded pagination and review-status filtering without loading
+and self-contained page artifact before acknowledging Redis. Authorized
+editors/admins can queue asynchronous regeneration for an existing page; the
+worker validates tenant/version lineage and writes a new draft generation/page
+identity under a server-owned configuration hash without overwriting the old
+artifact. Repeated delivery reuses immutable artifacts. The local provider is
+intentionally deterministic and title-grounded; no live LLM call, reviewer
+history, or model-quality claim is active yet. A metadata-only listing endpoint
+supports bounded pagination and review-status filtering without loading
 object-storage payloads.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine

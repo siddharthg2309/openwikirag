@@ -41,6 +41,16 @@ class MalformedJobMessageError(Exception):
     """Raised when a stream message cannot be trusted as an ingestion event."""
 
 
+WIKI_REGENERATION_EVENT_TYPE = "wiki.page.regeneration.requested"
+WIKI_REGENERATION_JOB_TYPE = "wiki_regeneration"
+
+
+INGESTION_EVENT_JOB_TYPES: dict[str, str] = {
+    "document.ingestion.requested": "ingestion",
+    WIKI_REGENERATION_EVENT_TYPE: WIKI_REGENERATION_JOB_TYPE,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class IngestionEvent:
     event_id: UUID
@@ -115,7 +125,7 @@ def parse_ingestion_event(message: StreamMessage) -> IngestionEvent:
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         raise MalformedJobMessageError("The event contains invalid identifiers or JSON.") from exc
 
-    if message.fields["event_type"] != "document.ingestion.requested":
+    if message.fields["event_type"] not in INGESTION_EVENT_JOB_TYPES:
         raise MalformedJobMessageError("The event type is not supported.")
     if not isinstance(raw_payload, dict):
         raise MalformedJobMessageError("The event payload must be an object.")
@@ -258,6 +268,14 @@ class IngestionConsumerService:
 
         assert claim.status is JobClaimStatus.CLAIMED
         assert claim.job is not None
+        expected_job_type = INGESTION_EVENT_JOB_TYPES[event.event_type]
+        if claim.job.job_type != expected_job_type:
+            await self._jobs.mark_dead_letter(
+                claim.job,
+                error_code="INGESTION_EVENT_JOB_MISMATCH",
+            )
+            await self._dead_letter_then_ack(message, reason="INGESTION_EVENT_JOB_MISMATCH")
+            return
         await self._run_claimed_job(message, event, claim)
 
     async def _run_claimed_job(

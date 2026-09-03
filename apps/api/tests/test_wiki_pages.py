@@ -35,6 +35,8 @@ from openwikirag.infrastructure.models import (
     Base,
     Document,
     DocumentVersion,
+    IngestionJob,
+    OutboxEvent,
     WikiPageArtifact,
 )
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
@@ -293,6 +295,27 @@ async def list_pages(
         params["offset"] = offset
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.get("/api/v1/wiki/pages", headers=headers, params=params)
+
+
+async def regenerate_page(
+    context: WikiPageApiContext,
+    artifact_id: UUID,
+    *,
+    token: str,
+    reason: str | None = None,
+    request_id: str | None = None,
+) -> Response:
+    transport = ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {token}"}
+    if request_id is not None:
+        headers["X-Request-ID"] = request_id
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        json_body = {"reason": reason} if reason is not None else None
+        return await client.post(
+            f"/api/v1/wiki/pages/{artifact_id}/regenerate",
+            headers=headers,
+            json=json_body,
+        )
 
 
 async def test_viewer_reads_complete_page_and_audits_success(
@@ -557,6 +580,153 @@ async def test_viewer_cannot_change_review_status(
         artifact = await session.get(WikiPageArtifact, wiki_page_api_context.page_artifact_id)
     assert artifact is not None
     assert artifact.review_status == "draft"
+
+
+async def test_editor_queues_regeneration_with_outbox_and_audit(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    response = await regenerate_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        token=make_token(
+            wiki_page_api_context.editor_subject,
+            wiki_page_api_context.tenant_id,
+        ),
+        reason="Refresh the structured page after the prompt update.",
+        request_id="regen-request-1",
+    )
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["source_page_artifact_id"] == str(wiki_page_api_context.page_artifact_id)
+    assert payload["tenant_id"] == str(wiki_page_api_context.tenant_id)
+    assert payload["status"] == "pending"
+
+    async with wiki_page_api_context.session_factory() as session:
+        job = await session.get(IngestionJob, UUID(payload["job_id"]))
+        event = await session.scalar(
+            select(OutboxEvent).where(
+                OutboxEvent.aggregate_id == payload["job_id"],
+                OutboxEvent.event_type == "wiki.page.regeneration.requested",
+            )
+        )
+        audit = await session.scalar(
+            select(AuditEvent).where(
+                AuditEvent.action == "wiki.page.regeneration.requested",
+                AuditEvent.resource_id == str(wiki_page_api_context.page_artifact_id),
+            )
+        )
+        original_page = await session.get(
+            WikiPageArtifact,
+            wiki_page_api_context.page_artifact_id,
+        )
+
+    assert job is not None
+    assert job.job_type == "wiki_regeneration"
+    assert str(job.document_version_id) == payload["document_version_id"]
+    assert job.request_id == "regen-request-1"
+    assert event is not None
+    assert event.payload_json == {
+        "ingestion_job_id": payload["job_id"],
+        "page_artifact_id": str(wiki_page_api_context.page_artifact_id),
+        "source_page_checksum": original_page.page_checksum if original_page else None,
+    }
+    assert audit is not None
+    assert audit.metadata_json == {
+        "ingestion_job_id": payload["job_id"],
+        "document_version_id": payload["document_version_id"],
+        "reason": "Refresh the structured page after the prompt update.",
+    }
+    assert original_page is not None
+    assert original_page.review_status == "draft"
+
+
+async def test_viewer_cannot_queue_regeneration(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    response = await regenerate_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        token=make_token(
+            wiki_page_api_context.subject,
+            wiki_page_api_context.tenant_id,
+        ),
+    )
+
+    assert response.status_code == 403
+    async with wiki_page_api_context.session_factory() as session:
+        jobs = list(
+            (
+                await session.scalars(
+                    select(IngestionJob).where(IngestionJob.job_type == "wiki_regeneration")
+                )
+            ).all()
+        )
+    assert jobs == []
+
+
+async def test_regeneration_audit_failure_rolls_back_job_and_outbox(
+    wiki_page_api_context: WikiPageApiContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openwikirag.infrastructure.repositories.audit import AuditRepository
+
+    async def fail_record(self: AuditRepository, **kwargs: Any) -> AuditEvent:
+        raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(AuditRepository, "record", fail_record)
+    response = await regenerate_page(
+        wiki_page_api_context,
+        wiki_page_api_context.page_artifact_id,
+        token=make_token(
+            wiki_page_api_context.editor_subject,
+            wiki_page_api_context.tenant_id,
+        ),
+    )
+
+    assert response.status_code == 500
+    async with wiki_page_api_context.session_factory() as session:
+        jobs = list(
+            (
+                await session.scalars(
+                    select(IngestionJob).where(IngestionJob.job_type == "wiki_regeneration")
+                )
+            ).all()
+        )
+        events = list(
+            (
+                await session.scalars(
+                    select(OutboxEvent).where(
+                        OutboxEvent.event_type == "wiki.page.regeneration.requested"
+                    )
+                )
+            ).all()
+        )
+    assert jobs == []
+    assert events == []
+
+
+async def test_foreign_and_missing_regeneration_targets_are_indistinguishable(
+    wiki_page_api_context: WikiPageApiContext,
+) -> None:
+    token = make_token(
+        wiki_page_api_context.editor_subject,
+        wiki_page_api_context.tenant_id,
+    )
+    foreign_response = await regenerate_page(
+        wiki_page_api_context,
+        wiki_page_api_context.foreign_page_artifact_id,
+        token=token,
+    )
+    missing_response = await regenerate_page(
+        wiki_page_api_context,
+        uuid4(),
+        token=token,
+    )
+
+    assert foreign_response.status_code == 404
+    assert missing_response.status_code == 404
+    assert foreign_response.json() == missing_response.json()
 
 
 async def test_foreign_and_missing_review_targets_are_indistinguishable(

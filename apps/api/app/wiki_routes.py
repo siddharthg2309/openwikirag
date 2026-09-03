@@ -5,7 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openwikirag.application.wiki import WikiPage
@@ -24,6 +24,11 @@ from openwikirag.application.wiki_page_artifacts import (
     WikiPageReviewResult,
     WikiPageReviewStatus,
     WikiPageReviewTransitionError,
+)
+from openwikirag.application.wiki_regeneration import (
+    WikiPageRegenerationError,
+    WikiPageRegenerationRequestService,
+    WikiPageRegenerationResult,
 )
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.infrastructure.storage import ObjectStorage
@@ -65,6 +70,22 @@ class WikiPageReviewResponse(BaseModel):
     previous_status: str
     review_status: str
     changed: bool
+
+
+class WikiPageRegenerationRequest(BaseModel):
+    """Optional operator context for an asynchronous regeneration request."""
+
+    reason: str | None = Field(default=None, max_length=512)
+
+
+class WikiPageRegenerationResponse(BaseModel):
+    """Durable regeneration job returned before worker execution."""
+
+    job_id: UUID
+    source_page_artifact_id: UUID
+    tenant_id: UUID
+    document_version_id: UUID
+    status: str
 
 
 class WikiPageArtifactSummaryResponse(BaseModel):
@@ -128,6 +149,24 @@ def _review_response(result: WikiPageReviewResult) -> WikiPageReviewResponse:
         previous_status=result.previous_status,
         review_status=result.review_status,
         changed=result.changed,
+    )
+
+
+def _regeneration_service(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> WikiPageRegenerationRequestService:
+    return WikiPageRegenerationRequestService(session)
+
+
+def _regeneration_response(
+    result: WikiPageRegenerationResult,
+) -> WikiPageRegenerationResponse:
+    return WikiPageRegenerationResponse(
+        job_id=result.job_id,
+        source_page_artifact_id=result.source_page_artifact_id,
+        tenant_id=result.tenant_id,
+        document_version_id=result.document_version_id,
+        status=result.status,
     )
 
 
@@ -350,3 +389,67 @@ async def review_wiki_page(
         ) from exc
 
     return _review_response(result)
+
+
+@router.post(
+    "/pages/{artifact_id}/regenerate",
+    response_model=WikiPageRegenerationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def regenerate_wiki_page(
+    artifact_id: UUID,
+    request: Request,
+    principal: Annotated[Principal, Depends(get_current_principal)],
+    service: Annotated[WikiPageRegenerationRequestService, Depends(_regeneration_service)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    body: WikiPageRegenerationRequest | None = None,
+) -> WikiPageRegenerationResponse:
+    """Queue a new page version without blocking on extraction or generation."""
+
+    try:
+        result = await service.request(
+            principal=principal,
+            artifact_id=artifact_id,
+            request_id=request.headers.get("X-Request-ID"),
+        )
+    except AuthorizationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The identity is not authorized to regenerate WikiRAG pages.",
+        ) from exc
+    except WikiPageRegenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The WikiRAG regeneration request could not be staged.",
+        ) from exc
+
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The requested WikiRAG page was not found.",
+        )
+
+    try:
+        await AuditRepository(session).record(
+            action="wiki.page.regeneration.requested",
+            resource_type="wiki_page_artifact",
+            resource_id=str(result.source_page_artifact_id),
+            tenant_id=UUID(principal.tenant_id),
+            actor_user_id=UUID(principal.subject_id),
+            request_id=request.headers.get("X-Request-ID"),
+            outcome="success",
+            metadata={
+                "ingestion_job_id": str(result.job_id),
+                "document_version_id": str(result.document_version_id),
+                "reason": body.reason if body is not None else None,
+            },
+        )
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The WikiRAG regeneration request could not be audited.",
+        ) from exc
+
+    return _regeneration_response(result)

@@ -26,6 +26,7 @@ from openwikirag.application.ocr import (
 from openwikirag.application.outbox import OutboxPublisherService
 from openwikirag.application.wiki_generation import DeterministicWikiProvider
 from openwikirag.application.wiki_ingestion import WikiIngestionHandler
+from openwikirag.application.wiki_regeneration import WikiJobRouter, WikiRegenerationHandler
 from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import Settings, get_settings
 from openwikirag.core.logging import configure_logging
@@ -78,15 +79,29 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 transport,
                 stream_name=settings.ingestion_stream_name,
             )
+            ingestion_handler = WikiIngestionHandler(
+                session,
+                storage,
+                config_hash=settings.wiki_generation_config_hash,
+                provider=DeterministicWikiProvider(),
+                extractors=extractors,
+            )
+            regeneration_pipeline = WikiIngestionHandler(
+                session,
+                storage,
+                config_hash=settings.wiki_regeneration_config_hash,
+                provider=DeterministicWikiProvider(),
+                extractors=extractors,
+            )
             ingestion = IngestionConsumerService(
                 session,
                 transport,
-                WikiIngestionHandler(
-                    session,
-                    storage,
-                    config_hash=settings.wiki_generation_config_hash,
-                    provider=DeterministicWikiProvider(),
-                    extractors=extractors,
+                WikiJobRouter(
+                    ingestion=ingestion_handler,
+                    regeneration=WikiRegenerationHandler(
+                        session,
+                        regeneration_pipeline,
+                    ),
                 ),
                 stream_name=settings.ingestion_stream_name,
                 group_name=settings.ingestion_consumer_group,

@@ -32,6 +32,26 @@ class JobRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def create(
+        self,
+        *,
+        tenant_id: UUID,
+        document_version_id: UUID,
+        job_type: str,
+        request_id: str | None = None,
+    ) -> IngestionJob:
+        """Stage one pending job while the caller owns the transaction."""
+
+        job = IngestionJob(
+            tenant_id=tenant_id,
+            document_version_id=document_version_id,
+            job_type=job_type,
+            request_id=request_id,
+        )
+        self._session.add(job)
+        await self._session.flush()
+        return job
+
     async def get_by_id(
         self,
         *,

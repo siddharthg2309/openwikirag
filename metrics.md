@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 4, Slice 4.9 — Deterministic WikiRAG worker activation.
+Current verified slice: Phase 4, Slice 4.10 — Authorized WikiRAG regeneration.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 172 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 179 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -39,13 +39,15 @@ Current verified slice: Phase 4, Slice 4.9 — Deterministic WikiRAG worker acti
 | Automated tests | Focused WikiRAG page-skeleton tests | 5 passed | verified | `uv run pytest apps/worker/tests/test_wiki.py` |
 | Automated tests | Focused WikiRAG generation-boundary tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_wiki_generation.py` |
 | Automated tests | Focused WikiRAG generation-persistence tests | 9 passed | verified | `uv run pytest apps/worker/tests/test_wiki_generation_artifacts.py` |
-| Automated tests | Focused WikiRAG page-read API tests | 7 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py` |
-| Automated tests | Focused WikiRAG review/RBAC tests | 23 passed | verified | `uv run pytest apps/api/tests/test_authorization.py apps/api/tests/test_wiki_pages.py` |
+| Automated tests | Focused WikiRAG page-read API tests | 7 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py -k 'read or object or malformed or corrupted or storage'` |
+| Automated tests | Focused WikiRAG review/RBAC tests | 27 passed | verified | `uv run pytest apps/api/tests/test_authorization.py apps/api/tests/test_wiki_pages.py` |
 | Automated tests | Focused WikiRAG page-listing tests | 4 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py -k 'list'` |
 | Automated tests | Focused OCR-boundary tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_ocr.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
-| Automated tests | Focused artifact-activation regression tests | 29 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
-| Automated tests | Focused WikiRAG worker-pipeline tests | 4 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_pipeline or wiki_output or wiki_provider'` |
+| Automated tests | Focused artifact-activation regression tests | 32 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
+| Automated tests | Focused WikiRAG worker-pipeline tests | 5 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_pipeline or wiki_output or wiki_provider or wiki_regeneration'` |
+| Automated tests | Focused WikiRAG regeneration API tests | 4 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py -k 'regeneration'` |
+| Automated tests | Focused WikiRAG regeneration worker tests | 3 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_regeneration or regeneration_event'` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
 | Static quality | Mypy | 0 issues across 70 source files | verified | `uv run mypy` |
@@ -94,6 +96,8 @@ Current verified slice: Phase 4, Slice 4.9 — Deterministic WikiRAG worker acti
 | WikiRAG | Page read API | 1 authenticated tenant-scoped read endpoint with checksum/schema verification and success auditing | verified | `GET /api/v1/wiki/pages/{artifact_id}` and 7 focused API tests |
 | WikiRAG | Review state machine | 3 states with 4 allowed directed transitions plus idempotent same-state retries | verified | `POST /api/v1/wiki/pages/{artifact_id}/review`, compare-and-set repository update, and focused tests |
 | WikiRAG | Page listing API | 1 authenticated metadata-only listing endpoint with bounded pagination, status filtering, stable ordering, and success auditing | verified | `GET /api/v1/wiki/pages` and 4 focused listing tests |
+| WikiRAG | Regeneration request API | 1 authenticated asynchronous regeneration endpoint using 1 durable job, 1 transactional-outbox event, and 1 success audit per request | verified | `POST /api/v1/wiki/pages/{artifact_id}/regenerate` and 4 focused API tests |
+| WikiRAG | Regenerated artifact versioning | 1 new configuration-identified generation/page pair per changed regeneration configuration; prior page bytes/review metadata preserved; duplicate delivery reuses artifacts | verified | `WikiRegenerationHandler` and 3 focused worker tests |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
@@ -103,6 +107,7 @@ Current verified slice: Phase 4, Slice 4.9 — Deterministic WikiRAG worker acti
 | Worker | Deterministic WikiRAG pipeline activation | 1 Markdown job produced 1 normalized artifact, 1 generation artifact, and 1 self-contained page artifact; job succeeded before acknowledgement | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_pipeline'` |
 | Worker | WikiRAG artifact replay reuse | 1 simulated post-artifact crash replay reused exactly 1 normalized, 1 generation, and 1 page artifact per identity | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'reuses_artifacts'` |
 | Worker | WikiRAG failure classification | 2 focused cases: invalid provider output dead-lettered; provider exception remained retryable and unacknowledged | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_output or wiki_provider'` |
+| Worker | WikiRAG regeneration routing | 1 same-tenant regeneration job produced a new draft page identity; 2 invalid/mismatched event cases dead-lettered before page creation | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_regeneration or regeneration_event'` |
 | Integration | Native OCR runtime availability | Poppler render verified; Tesseract unavailable on verification host | unverified | Real generated-PDF Poppler check; `command -v tesseract` absent |
 
 The current suite count includes the PostgreSQL integration test only when its
@@ -294,6 +299,8 @@ versions rather than pretending to have scale results.
 - Added **1 authenticated metadata-only WikiRAG page-listing endpoint** with **2 bounded pagination controls**, server-side review filtering, deterministic ordering, `has_more` continuation, tenant exclusion, and success auditing without object-storage reads; verified with **4 focused listing tests**, **168 local tests**, and **1 PostgreSQL integration test**. Cursor pagination, review history, comments, assignment, regeneration, worker activation, and document-table RLS remain deferred.
 
 - Activated the deterministic WikiRAG worker pipeline across **5 ordered stages** (normalization, metadata/page construction, structured generation, generation-artifact persistence, and page-artifact persistence) with **3 immutable artifact outputs**, a replaceable provider port, named progress steps, and permanent-versus-retryable failure mapping; verified with **4 focused pipeline tests**, **172 local tests**, and duplicate replay reuse. Live LLM orchestration, provider-specific retries, regeneration, and document-table RLS remain deferred.
+
+- Added **1 authenticated asynchronous WikiRAG regeneration endpoint** for editor/admin roles, backed by **1 durable job**, **1 transactional-outbox event**, and **1 success audit** per request; worker routing validates the source page's tenant/version lineage and creates a new configuration-identified draft artifact while preserving the prior page bytes and review status; verified with **4 API tests**, **3 worker tests**, **179 local tests**, and duplicate delivery reuse. Live provider/model selection, request-key deduplication, and PostgreSQL/Redis regeneration smoke remain deferred.
 
 ### Future measured bullets
 

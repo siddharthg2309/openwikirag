@@ -29,6 +29,10 @@ from openwikirag.application.normalized_artifacts import NormalizedArtifactInges
 from openwikirag.application.ocr import OcrPageResult, OcrUnavailableError
 from openwikirag.application.wiki_generation import WikiGenerationRequest
 from openwikirag.application.wiki_ingestion import WikiIngestionHandler
+from openwikirag.application.wiki_regeneration import (
+    WikiJobRouter,
+    WikiRegenerationHandler,
+)
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import (
     Base,
@@ -258,6 +262,7 @@ def make_message(
     *,
     message_id: str = "1-0",
     payload: dict[str, object] | None = None,
+    event_type: str = "document.ingestion.requested",
 ) -> StreamMessage:
     event_payload = payload or {
         "document_id": str(uuid4()),
@@ -268,7 +273,7 @@ def make_message(
         message_id=message_id,
         fields={
             "event_id": str(uuid4()),
-            "event_type": "document.ingestion.requested",
+            "event_type": event_type,
             "tenant_id": str(tenant_id),
             "aggregate_id": str(job_id),
             "payload": json.dumps(event_payload),
@@ -689,6 +694,149 @@ async def test_wiki_pipeline_reuses_artifacts_after_artifact_complete_boundary(
     assert await session.scalar(select(func.count(NormalizedDocumentArtifact.id))) == 1
     assert await session.scalar(select(func.count(WikiGenerationArtifact.id))) == 1
     assert await session.scalar(select(func.count(WikiPageArtifact.id))) == 1
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_wiki_regeneration_creates_new_version_and_preserves_old_page(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, initial_job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nOpenWikiRAG uses citations.\n",
+    )
+    initial_handler = WikiIngestionHandler(session, storage, config_hash="b" * 64)
+    await initial_handler.handle(job=initial_job, payload={})
+    original_page = await session.scalar(select(WikiPageArtifact))
+    assert original_page is not None
+    original_object = await storage.get(object_key=original_page.artifact_object_key)
+    original_review_status = original_page.review_status
+
+    regeneration_job = IngestionJob(
+        tenant_id=tenant.id,
+        document_version_id=initial_job.document_version_id,
+        job_type="wiki_regeneration",
+    )
+    session.add(regeneration_job)
+    await session.commit()
+
+    message = make_message(
+        tenant.id,
+        regeneration_job.id,
+        event_type="wiki.page.regeneration.requested",
+        payload={
+            "ingestion_job_id": str(regeneration_job.id),
+            "page_artifact_id": str(original_page.id),
+            "source_page_checksum": original_page.page_checksum,
+        },
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(message)
+    regeneration_pipeline = WikiIngestionHandler(
+        session,
+        storage,
+        config_hash="c" * 64,
+    )
+    router = WikiJobRouter(
+        ingestion=initial_handler,
+        regeneration=WikiRegenerationHandler(session, regeneration_pipeline),
+    )
+
+    assert await make_service(session, transport, router).consume_once() == 1
+
+    pages = list((await session.scalars(select(WikiPageArtifact))).all())
+    generations = list((await session.scalars(select(WikiGenerationArtifact))).all())
+    refreshed_original = await session.get(WikiPageArtifact, original_page.id)
+    refreshed_job = await session.get(IngestionJob, regeneration_job.id)
+    assert refreshed_job is not None
+    assert refreshed_job.status == "succeeded"
+    assert refreshed_original is not None
+    assert refreshed_original.review_status == original_review_status
+    assert await storage.get(object_key=refreshed_original.artifact_object_key) == original_object
+    assert len(pages) == 2
+    assert len(generations) == 2
+    assert {generation.config_hash for generation in generations} == {"b" * 64, "c" * 64}
+    assert len({page.generation_artifact_id for page in pages}) == 2
+    assert transport.acknowledged == ["1-0"]
+
+    # A duplicate delivery sees the terminal job and cannot create a third artifact.
+    transport.new_messages.append(message)
+    assert await make_service(session, transport, router).consume_once() == 1
+    assert await session.scalar(select(func.count(WikiPageArtifact.id))) == 2
+    assert await session.scalar(select(func.count(WikiGenerationArtifact.id))) == 2
+    assert transport.acknowledged == ["1-0", "1-0"]
+
+
+async def test_regeneration_event_with_invalid_source_is_dead_lettered(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nBody.\n",
+    )
+    job.job_type = "wiki_regeneration"
+    await session.commit()
+    transport = FakeTransport()
+    transport.new_messages.append(
+        make_message(
+            tenant.id,
+            job.id,
+            event_type="wiki.page.regeneration.requested",
+            payload={
+                "ingestion_job_id": str(job.id),
+                "page_artifact_id": str(uuid4()),
+                "source_page_checksum": "a" * 64,
+            },
+        )
+    )
+    pipeline = WikiIngestionHandler(session, storage, config_hash="c" * 64)
+    router = WikiJobRouter(
+        ingestion=pipeline,
+        regeneration=WikiRegenerationHandler(session, pipeline),
+    )
+
+    assert await make_service(session, transport, router).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "dead_letter"
+    assert await session.scalar(select(func.count(WikiPageArtifact.id))) == 0
+    assert transport.dead_letters[0][1] == "INGESTION_PERMANENT_FAILURE"
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_regeneration_event_cannot_run_a_regular_job(
+    session: AsyncSession,
+) -> None:
+    tenant, job = await create_job(session)
+    transport = FakeTransport()
+    transport.new_messages.append(
+        make_message(
+            tenant.id,
+            job.id,
+            event_type="wiki.page.regeneration.requested",
+            payload={
+                "ingestion_job_id": str(job.id),
+                "page_artifact_id": str(uuid4()),
+                "source_page_checksum": "a" * 64,
+            },
+        )
+    )
+
+    assert await make_service(session, transport, RecordingHandler()).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "dead_letter"
+    assert refreshed.last_error_code == "INGESTION_EVENT_JOB_MISMATCH"
+    assert transport.dead_letters[0][1] == "INGESTION_EVENT_JOB_MISMATCH"
     assert transport.acknowledged == ["1-0"]
 
 

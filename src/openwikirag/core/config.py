@@ -64,6 +64,10 @@ class Settings(BaseSettings):
         default="0" * 64,
         pattern=r"^[0-9a-f]{64}$",
     )
+    wiki_regeneration_config_hash: str = Field(
+        default="1" * 64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
 
 @lru_cache
