@@ -56,6 +56,7 @@ class DocumentMetadata(BaseModel):
     schema_version: Literal["document-metadata-v1"] = "document-metadata-v1"
     metadata_version: str = Field(default="deterministic-metadata-v1", min_length=1)
     source_type: str = Field(min_length=1)
+    source_artifact_checksum: str = Field(pattern=r"^[0-9a-f]{64}$")
     title: str = Field(min_length=1)
     title_evidence: MetadataEvidence | None = None
     language: MetadataLanguage
@@ -113,6 +114,7 @@ class DeterministicMetadataExtractor:
         return DocumentMetadata(
             metadata_version=self.metadata_version,
             source_type=document.source_type,
+            source_artifact_checksum=document.checksum_sha256,
             title=title,
             title_evidence=title_evidence,
             language=_classify_language(document.text),

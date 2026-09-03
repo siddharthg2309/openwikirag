@@ -67,9 +67,10 @@ deterministic page-coverage quality metadata and an OCR handoff signal; OCR is
 disabled by default.
 
 Phase 4 currently includes a deterministic metadata contract over normalized
-artifacts for title, language, headings, dates, and authors. Its evidence
-ranges point back to normalized text; LLM-generated WikiRAG pages, metadata
-persistence, and human review are later slices.
+artifacts for title, language, headings, dates, and authors, plus a typed
+WikiRAG page skeleton with stable section ids. Its evidence ranges point back
+to normalized text; LLM-generated fields, page persistence, and human review
+are later slices.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
