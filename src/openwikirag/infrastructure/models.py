@@ -266,6 +266,57 @@ class NormalizedDocumentArtifact(Base):
     )
 
 
+class ChunkManifestArtifact(Base):
+    """Immutable metadata index for one persisted deterministic chunk manifest."""
+
+    __tablename__ = "chunk_manifest_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "document_version_id",
+            "normalized_artifact_id",
+            "manifest_schema_version",
+            "chunking_config_checksum",
+            name="uq_chunk_manifest_artifact_identity",
+        ),
+        UniqueConstraint(
+            "artifact_object_key",
+            name="uq_chunk_manifest_artifact_object_key",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_version_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    normalized_artifact_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("normalized_document_artifacts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    manifest_schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_artifact_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunking_config_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    manifest_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    artifact_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
+    chunk_count: Mapped[int] = mapped_column(nullable=False)
+    parent_count: Mapped[int] = mapped_column(nullable=False)
+    child_count: Mapped[int] = mapped_column(nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
 class WikiGenerationArtifact(Base):
     """Immutable metadata index for one validated generated WikiRAG payload."""
 

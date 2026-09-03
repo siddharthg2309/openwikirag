@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from openwikirag.application.extraction import NormalizedDocument, SourceSpan
 
 CHUNK_SCHEMA_VERSION: Literal["chunk-v1"] = "chunk-v1"
+CHUNKING_CONFIG_SCHEMA_VERSION: Literal["chunking-config-v1"] = "chunking-config-v1"
 type ChunkKind = Literal["parent", "child"]
 _TOKEN_PATTERN = re.compile(r"\S+")
 
@@ -113,6 +114,34 @@ class ChunkingConfig:
             raise ChunkingConfigurationError(
                 "Child overlap must be smaller than the child token budget."
             )
+
+    def canonical_payload(self) -> dict[str, int | str]:
+        """Return the server-owned configuration identity used by artifacts."""
+
+        return {
+            "schema_version": CHUNKING_CONFIG_SCHEMA_VERSION,
+            "parent_max_tokens": self.parent_max_tokens,
+            "parent_max_characters": self.parent_max_characters,
+            "child_max_tokens": self.child_max_tokens,
+            "child_max_characters": self.child_max_characters,
+            "child_overlap_tokens": self.child_overlap_tokens,
+        }
+
+    def canonical_bytes(self) -> bytes:
+        """Serialize the validated configuration deterministically."""
+
+        return json.dumps(
+            self.canonical_payload(),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+
+    @property
+    def checksum_sha256(self) -> str:
+        """Return the stable checksum for this validated configuration."""
+
+        return hashlib.sha256(self.canonical_bytes()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)

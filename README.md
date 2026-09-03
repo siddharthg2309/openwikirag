@@ -100,6 +100,12 @@ offsets, section path, page range, checksums, and stable ids. This is a pure
 pre-embedding contract; persistence, model-specific tokenization, embeddings,
 Qdrant, retrieval, and reranking remain later slices.
 
+The next Phase 5 boundary persists that chunk result as one immutable,
+checksum-addressed JSON manifest in object storage plus tenant/version/source
+metadata in PostgreSQL. Repeated runs verify and reuse the manifest, while
+changed chunking configuration creates a new identity; embedding and Qdrant
+projection are still deferred.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the
