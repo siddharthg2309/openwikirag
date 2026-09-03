@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 4, Slice 4.2 — Deterministic WikiRAG page skeleton.
+Current verified slice: Phase 4, Slice 4.3 — Provider-neutral structured WikiRAG generation boundary.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 122 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 130 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -37,12 +37,13 @@ Current verified slice: Phase 4, Slice 4.2 — Deterministic WikiRAG page skelet
 | Automated tests | Focused extraction/provenance/quality/OCR-merge/DOCX tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_extraction.py` |
 | Automated tests | Focused deterministic metadata tests | 6 passed | verified | `uv run pytest apps/worker/tests/test_metadata.py` |
 | Automated tests | Focused WikiRAG page-skeleton tests | 5 passed | verified | `uv run pytest apps/worker/tests/test_wiki.py` |
+| Automated tests | Focused WikiRAG generation-boundary tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_wiki_generation.py` |
 | Automated tests | Focused OCR-boundary tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_ocr.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
 | Automated tests | Focused artifact-activation regression tests | 25 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 60 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 62 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0005_normalized_artifacts` | verified | Fresh PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Migration drift | No new upgrade operations | verified | `uv run alembic check` |
@@ -78,7 +79,10 @@ Current verified slice: Phase 4, Slice 4.2 — Deterministic WikiRAG page skelet
 | Metadata | Supported date formats | 2 (ISO and month-name dates) | verified | Valid-date normalization tests; ambiguous numeric dates are omitted |
 | WikiRAG | Typed page-skeleton models | 4 (`WikiPage`, `WikiSection`, `WikiDefinition`, `WikiReference`) | verified | `src/openwikirag/application/wiki.py` and focused tests |
 | WikiRAG | Deterministic section identity | 1 SHA-256-derived stable id per source heading | verified | `WikiPageBuilder` repeat-build and section tests |
-| WikiRAG | Page generation status | `draft` skeleton; model-generated fields empty | verified | Page-builder contract; LLM generation remains deferred |
+| WikiRAG | Structured generation contract | 1 replaceable provider port; 1 immutable request; 1 immutable result; 3 generated field types | verified | `src/openwikirag/application/wiki_generation.py` and 8 focused tests |
+| WikiRAG | Generation reproducibility identities | 6 captured identities (page, source, metadata, prompt, config, provider) | verified | `WikiGenerationResult` canonical contract and deterministic test |
+| WikiRAG | Generation error classes | 3 typed classes (input, provider, invalid output) | verified | Boundary failure tests; future retry/dead-letter mapping remains deferred |
+| WikiRAG | Page generation status | `draft` skeleton; generated fields remain in-memory until persistence slice | verified | Page-builder and generation-boundary contracts; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
 | Extraction | OCR-enriched merge proof | 1 mixed three-page fixture; only the missing page was OCR-routed and recovered | verified | Fake OCR extraction and consumer tests |
@@ -260,7 +264,9 @@ versions rather than pretending to have scale results.
 
 - Established a deterministic metadata contract for **5 fields** with frozen Pydantic schemas, title precedence, conservative `en`/`und` classification, valid ISO/month-name date normalization, labeled author splitting, normalized-text evidence ranges, and canonical checksums; verified with **6 focused metadata tests** and **117 local tests**. LLM generation and metadata persistence remain later slices.
 
-- Built a deterministic WikiRAG page skeleton with **4 typed Pydantic models**, source/metadata checksum propagation, stable heading-derived section ids, draft review status, and evidence-bearing contracts for future definitions/references; verified with **5 focused WikiRAG tests** and **122 local tests**. LLM generation, persistence, and human review remain later slices.
+- Built a deterministic WikiRAG page skeleton with **4 typed Pydantic models**, source/metadata checksum propagation, stable heading-derived section ids, draft review status, and evidence-bearing contracts for future definitions/references; verified with **5 focused WikiRAG tests** and **122 local tests**.
+
+- Added a provider-neutral structured WikiRAG generation boundary with **1 provider port**, **1 immutable request**, **1 immutable result**, **3 generated field types**, and **6 reproducibility identities** (page, source, metadata, prompt, config, provider); verified with **8 focused generation tests** and **130 local tests**. Real model invocation, persistence, retries, and human review remain deferred.
 
 ### Future measured bullets
 
