@@ -92,6 +92,7 @@ class PersistedNormalizedArtifact:
     artifact_object_key: str
     character_count: int
     span_count: int
+    normalized_document: NormalizedDocument
     reused: bool
 
 
@@ -157,7 +158,11 @@ class NormalizedArtifactService:
                 existing.content_checksum_sha256 == checksum
                 and existing.artifact_object_key == object_key
             )
-            existing_result = _result(existing, reused=True)
+            existing_result = _result(
+                existing,
+                normalized_document=normalized,
+                reused=True,
+            )
             await self._session.rollback()
             if matches_existing:
                 return existing_result
@@ -202,7 +207,11 @@ class NormalizedArtifactService:
                 and winner.content_checksum_sha256 == checksum
                 and winner.artifact_object_key == object_key
             ):
-                winner_result = _result(winner, reused=True)
+                winner_result = _result(
+                    winner,
+                    normalized_document=normalized,
+                    reused=True,
+                )
                 await self._session.rollback()
                 return winner_result
             await self._cleanup(object_key)
@@ -214,7 +223,11 @@ class NormalizedArtifactService:
             cleanup_failed = await self._cleanup(object_key)
             raise NormalizedArtifactPersistenceError(cleanup_failed=cleanup_failed) from exc
 
-        return _result(artifact, reused=False)
+        return _result(
+            artifact,
+            normalized_document=normalized,
+            reused=False,
+        )
 
     async def _cleanup(self, object_key: str) -> bool:
         try:
@@ -249,6 +262,7 @@ def _safe_key_component(value: str) -> str:
 def _result(
     artifact: NormalizedDocumentArtifact,
     *,
+    normalized_document: NormalizedDocument,
     reused: bool,
 ) -> PersistedNormalizedArtifact:
     return PersistedNormalizedArtifact(
@@ -260,5 +274,6 @@ def _result(
         artifact_object_key=artifact.artifact_object_key,
         character_count=artifact.character_count,
         span_count=artifact.span_count,
+        normalized_document=normalized_document,
         reused=reused,
     )

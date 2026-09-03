@@ -107,6 +107,33 @@ class WikiGenerationProvider(Protocol):
         """Return parsed structured data or a JSON response body."""
 
 
+@dataclass(frozen=True, slots=True)
+class DeterministicWikiProvider:
+    """Provide a reproducible local baseline without making an LLM call.
+
+    The baseline only turns existing title evidence into a short summary. It
+    intentionally does not infer facts from free text; a real model adapter
+    can later replace this provider while keeping the same validation boundary.
+    """
+
+    provider_identity: str = "deterministic-baseline-v1"
+
+    def generate(self, *, request: WikiGenerationRequest) -> object:
+        """Return title-grounded content, or empty valid content without evidence."""
+
+        title_evidence = request.page.title_evidence
+        if title_evidence is None:
+            return {"summary": None, "definitions": [], "references": []}
+        return {
+            "summary": {
+                "text": f"This page is titled {request.page.title}.",
+                "evidence": [title_evidence.model_dump(mode="json")],
+            },
+            "definitions": [],
+            "references": [],
+        }
+
+
 class WikiGenerationResult(BaseModel):
     """Validated model-owned content tied to one immutable page version."""
 

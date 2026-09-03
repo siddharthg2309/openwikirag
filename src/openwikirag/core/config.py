@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     ocr_page_segmentation_mode: int = Field(default=6, ge=0, le=13)
     ocr_timeout_seconds: float = Field(default=30.0, gt=0, le=300)
     ocr_max_pages: int = Field(default=50, ge=1, le=500)
+    wiki_generation_config_hash: str = Field(
+        default="0" * 64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
 
 @lru_cache

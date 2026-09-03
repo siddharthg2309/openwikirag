@@ -10,7 +10,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from openwikirag.application.extraction import (
@@ -27,6 +27,8 @@ from openwikirag.application.ingestion import (
 )
 from openwikirag.application.normalized_artifacts import NormalizedArtifactIngestionHandler
 from openwikirag.application.ocr import OcrPageResult, OcrUnavailableError
+from openwikirag.application.wiki_generation import WikiGenerationRequest
+from openwikirag.application.wiki_ingestion import WikiIngestionHandler
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import (
     Base,
@@ -35,6 +37,8 @@ from openwikirag.infrastructure.models import (
     IngestionJob,
     NormalizedDocumentArtifact,
     Tenant,
+    WikiGenerationArtifact,
+    WikiPageArtifact,
 )
 from openwikirag.infrastructure.storage import LocalObjectStorage, ObjectStorageError
 from openwikirag.infrastructure.streams import StreamMessage
@@ -134,6 +138,22 @@ class RecordingHandler:
             failure = self.failure
             self.failure = None
             raise failure
+
+
+class InvalidWikiProvider:
+    provider_identity = "invalid-test-provider-v1"
+
+    def generate(self, *, request: WikiGenerationRequest) -> object:
+        del request
+        return {"unknown": True}
+
+
+class FailingWikiProvider:
+    provider_identity = "failing-test-provider-v1"
+
+    def generate(self, *, request: WikiGenerationRequest) -> object:
+        del request
+        raise RuntimeError("provider unavailable")
 
 
 class FakeOcrFallback:
@@ -585,6 +605,154 @@ async def test_docx_job_persists_a_normalized_artifact_before_ack(
     )
     assert stored["text"] == "Overview\nBody text"
     assert transport.acknowledged == ["1-0"]
+
+
+async def test_wiki_pipeline_persists_all_immutable_artifacts_before_ack(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nOpenWikiRAG uses citations.\n",
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(
+        make_message(
+            tenant.id,
+            job.id,
+            payload={
+                "document_id": str(uuid4()),
+                "document_version_id": str(uuid4()),
+                "ingestion_job_id": str(job.id),
+            },
+        )
+    )
+    handler = WikiIngestionHandler(
+        session,
+        storage,
+        config_hash="b" * 64,
+    )
+
+    assert await make_service(session, transport, handler).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    normalized = await session.scalar(select(NormalizedDocumentArtifact))
+    generation = await session.scalar(select(WikiGenerationArtifact))
+    page = await session.scalar(select(WikiPageArtifact))
+    assert refreshed is not None
+    assert refreshed.status == "succeeded"
+    assert refreshed.current_step == "complete"
+    assert normalized is not None
+    assert generation is not None
+    assert generation.normalized_artifact_id == normalized.id
+    assert generation.provider_identity == "deterministic-baseline-v1"
+    assert page is not None
+    assert page.generation_artifact_id == generation.id
+    assert page.normalized_artifact_id == normalized.id
+    stored_page = json.loads(
+        (await storage.get(object_key=page.artifact_object_key)).decode("utf-8")
+    )
+    assert stored_page["page"]["title"] == "Overview"
+    assert stored_page["generation"]["provider_identity"] == "deterministic-baseline-v1"
+    assert stored_page["generation"]["content"]["summary"]["text"] == (
+        "This page is titled Overview."
+    )
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_wiki_pipeline_reuses_artifacts_after_artifact_complete_boundary(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nOpenWikiRAG uses citations.\n",
+    )
+    handler = WikiIngestionHandler(session, storage, config_hash="b" * 64)
+
+    # Simulate a worker crash after all artifact commits but before job success.
+    await handler.handle(job=job, payload={})
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+
+    assert await make_service(session, transport, handler).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "succeeded"
+    assert await session.scalar(select(func.count(NormalizedDocumentArtifact.id))) == 1
+    assert await session.scalar(select(func.count(WikiGenerationArtifact.id))) == 1
+    assert await session.scalar(select(func.count(WikiPageArtifact.id))) == 1
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_invalid_wiki_output_is_dead_lettered_after_normalization(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nBody.\n",
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    handler = WikiIngestionHandler(
+        session,
+        storage,
+        config_hash="b" * 64,
+        provider=InvalidWikiProvider(),
+    )
+
+    assert await make_service(session, transport, handler).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "dead_letter"
+    assert await session.scalar(select(func.count(NormalizedDocumentArtifact.id))) == 1
+    assert await session.scalar(select(func.count(WikiGenerationArtifact.id))) == 0
+    assert await session.scalar(select(func.count(WikiPageArtifact.id))) == 0
+    assert transport.dead_letters[0][1] == "INGESTION_PERMANENT_FAILURE"
+    assert transport.acknowledged == ["1-0"]
+
+
+async def test_wiki_provider_failure_is_retryable_and_unacknowledged(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nBody.\n",
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    handler = WikiIngestionHandler(
+        session,
+        storage,
+        config_hash="b" * 64,
+        provider=FailingWikiProvider(),
+    )
+
+    assert await make_service(session, transport, handler).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "retryable"
+    assert refreshed.last_error_code == "INGESTION_RETRYABLE_FAILURE"
+    assert await session.scalar(select(func.count(NormalizedDocumentArtifact.id))) == 1
+    assert await session.scalar(select(func.count(WikiGenerationArtifact.id))) == 0
+    assert transport.acknowledged == []
 
 
 async def test_worker_ocr_activation_merges_only_missing_pdf_pages(

@@ -17,7 +17,6 @@ from openwikirag.application.extraction import (
 from openwikirag.application.ingestion import (
     IngestionConsumerService,
 )
-from openwikirag.application.normalized_artifacts import NormalizedArtifactIngestionHandler
 from openwikirag.application.ocr import (
     OcrOptions,
     PdfOcrFallback,
@@ -25,6 +24,8 @@ from openwikirag.application.ocr import (
     TesseractOcrEngine,
 )
 from openwikirag.application.outbox import OutboxPublisherService
+from openwikirag.application.wiki_generation import DeterministicWikiProvider
+from openwikirag.application.wiki_ingestion import WikiIngestionHandler
 from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import Settings, get_settings
 from openwikirag.core.logging import configure_logging
@@ -80,9 +81,11 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
             ingestion = IngestionConsumerService(
                 session,
                 transport,
-                NormalizedArtifactIngestionHandler(
+                WikiIngestionHandler(
                     session,
                     storage,
+                    config_hash=settings.wiki_generation_config_hash,
+                    provider=DeterministicWikiProvider(),
                     extractors=extractors,
                 ),
                 stream_name=settings.ingestion_stream_name,

@@ -23,11 +23,11 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-03
-Current verified slice: Phase 4, Slice 4.8 — Tenant-scoped WikiRAG page listing.
+Current verified slice: Phase 4, Slice 4.9 — Deterministic WikiRAG worker activation.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 168 passed, 3 skipped | verified | `uv run pytest` |
+| Automated tests | Local test suite | 172 passed, 3 skipped | verified | `uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -44,7 +44,8 @@ Current verified slice: Phase 4, Slice 4.8 — Tenant-scoped WikiRAG page listin
 | Automated tests | Focused WikiRAG page-listing tests | 4 passed | verified | `uv run pytest apps/api/tests/test_wiki_pages.py -k 'list'` |
 | Automated tests | Focused OCR-boundary tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_ocr.py` |
 | Automated tests | Focused normalized-artifact persistence tests | 8 passed | verified | `uv run pytest apps/worker/tests/test_normalized_artifacts.py` |
-| Automated tests | Focused artifact-activation regression tests | 25 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
+| Automated tests | Focused artifact-activation regression tests | 29 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py apps/worker/tests/test_worker.py apps/worker/tests/test_normalized_artifacts.py` |
+| Automated tests | Focused WikiRAG worker-pipeline tests | 4 passed | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_pipeline or wiki_output or wiki_provider'` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
 | Static quality | Mypy | 0 issues across 70 source files | verified | `uv run mypy` |
@@ -99,6 +100,9 @@ Current verified slice: Phase 4, Slice 4.8 — Tenant-scoped WikiRAG page listin
 | Extraction | OCR-enriched merge proof | 1 mixed three-page fixture; only the missing page was OCR-routed and recovered | verified | Fake OCR extraction and consumer tests |
 | Worker | OCR-enabled consumer path | 1 mixed PDF job succeeded with fake OCR; acknowledged after artifact/job commit | verified | `apps/api/tests/test_ingestion.py` |
 | Worker | DOCX artifact-processing consumer path | 1 SQLite-backed DOCX job succeeded with artifact commit before acknowledgement | verified | `apps/api/tests/test_ingestion.py` |
+| Worker | Deterministic WikiRAG pipeline activation | 1 Markdown job produced 1 normalized artifact, 1 generation artifact, and 1 self-contained page artifact; job succeeded before acknowledgement | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_pipeline'` |
+| Worker | WikiRAG artifact replay reuse | 1 simulated post-artifact crash replay reused exactly 1 normalized, 1 generation, and 1 page artifact per identity | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'reuses_artifacts'` |
+| Worker | WikiRAG failure classification | 2 focused cases: invalid provider output dead-lettered; provider exception remained retryable and unacknowledged | verified | `uv run pytest apps/api/tests/test_ingestion.py -k 'wiki_output or wiki_provider'` |
 | Integration | Native OCR runtime availability | Poppler render verified; Tesseract unavailable on verification host | unverified | Real generated-PDF Poppler check; `command -v tesseract` absent |
 
 The current suite count includes the PostgreSQL integration test only when its
@@ -288,6 +292,8 @@ versions rather than pretending to have scale results.
 - Added a **3-state WikiRAG review workflow** with **1 dedicated RBAC permission**, **4 explicit transitions**, idempotent same-state retries, tenant-scoped compare-and-set concurrency protection, immutable object preservation, and atomic success auditing; verified with **9 review-focused tests**, **164 local tests**, and **1 PostgreSQL integration test**. Review history, comments, assignment, regeneration, worker activation, and document-table RLS remain deferred.
 
 - Added **1 authenticated metadata-only WikiRAG page-listing endpoint** with **2 bounded pagination controls**, server-side review filtering, deterministic ordering, `has_more` continuation, tenant exclusion, and success auditing without object-storage reads; verified with **4 focused listing tests**, **168 local tests**, and **1 PostgreSQL integration test**. Cursor pagination, review history, comments, assignment, regeneration, worker activation, and document-table RLS remain deferred.
+
+- Activated the deterministic WikiRAG worker pipeline across **5 ordered stages** (normalization, metadata/page construction, structured generation, generation-artifact persistence, and page-artifact persistence) with **3 immutable artifact outputs**, a replaceable provider port, named progress steps, and permanent-versus-retryable failure mapping; verified with **4 focused pipeline tests**, **172 local tests**, and duplicate replay reuse. Live LLM orchestration, provider-specific retries, regeneration, and document-table RLS remain deferred.
 
 ### Future measured bullets
 

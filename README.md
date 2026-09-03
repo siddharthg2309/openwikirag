@@ -80,10 +80,14 @@ page object without reconstructing the skeleton. Authenticated tenant members
 can now read that page through an integrity-checked API path with success
 auditing. Authorized editors/admins can also move its mutable review metadata
 through `draft`, `needs_review`, and `approved` with compare-and-set protection
-and audit evidence, while the page object remains immutable. No real LLM call,
-worker activation, review history, or regeneration workflow is active yet.
-A metadata-only listing endpoint supports bounded pagination and review-status
-filtering without loading object-storage payloads.
+and audit evidence, while the page object remains immutable. The durable worker
+now activates the complete deterministic path from normalized artifact through
+metadata, page skeleton, structured-generation validation, generation artifact,
+and self-contained page artifact before acknowledging Redis. Its local baseline
+provider is intentionally deterministic and title-grounded; no live LLM call,
+review history, or regeneration workflow is active yet. A metadata-only listing
+endpoint supports bounded pagination and review-status filtering without loading
+object-storage payloads.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
