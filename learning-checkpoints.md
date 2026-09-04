@@ -1721,3 +1721,19 @@ Evidence: 9 focused tests passed including real qwen2.5:7b supported and unsuppo
 5. Explain the mutable-tag provenance limitation and this slice honestly in an interview.
 
 Learner answers: pending.
+
+## Slice 8.2 — Durable typed LangGraph answer workflow
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: Nine explicit stages reuse bounded canonical retrieval, RRF/deduplication, optional Neo4j expansion and common-source reranking, then context packing, generation and current-source validation. State is JSON-compatible and capped at 1MiB; heavy intermediate fields are cleared after use. PostgreSQL AsyncPostgresSaver has its own ow_checkpoints schema and operator-only setup/grant CLI. Tenant/user/run-derived keys and provider identity are checked on resume. Inherited external tracing is disabled. Raw workflow is trusted-service-only; API live membership checks/concurrency belong to8.3. Alternative custom persistence would duplicate an established library; in-memory storage alone cannot survive restart.
+Execution and failures: authorize -> retrieve -> fuse -> resolve -> graph -> rerank -> context -> generate -> validate. Each completed stage is synchronously checkpointed. Transient generation failure preserves context and next=generate. A fresh connection resumes only generate/validate. Canonical sources are reread before model/reranker use and after generation; invalidated source blocks result. Result reads revalidate citations again. Empty evidence follows8.1 refusal path. State/private DB content requires retention handling in9; no public raw checkpoint API.
+Files: application/workflow.py; application/reranking.py; infrastructure/checkpoints.py; checkpoint_cli.py; apps/worker/tests/test_workflow.py; pyproject.toml; uv.lock.
+Evidence: 6 focused tests passed (3.94s), including fresh real PostgreSQL connection resume/read/delete under non-superuser openwikirag_rls_test, stale source denial, user/tenant/provider isolation, and graph-source rerank/nonfinite rejection. Service-enabled full suite 367 passed/4 skips/1 warning (24.82s). Ruff/mypy128 files, lock, diff, checkpoint CLI/grants and Alembic drift check passed. LangGraph1.2.11, postgres-checkpointer3.1.2, psycopg3.3.5. Independent reviewer did not complete inspection; no independent clean-review claim.
+
+1. How does a checkpoint differ from an answer artifact or long-term memory?
+2. Which nodes run after a timeout, and why can the earlier retrieval be reused?
+3. Why must canonical source and current authorization be rechecked after restart?
+4. What can repeat after a crash, and why is this not exactly-once model execution?
+5. Explain the separate checkpoint schema, sensitive-state retention, and bounded-stage design in an interview.
+
+Learner answers: pending.

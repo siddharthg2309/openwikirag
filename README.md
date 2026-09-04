@@ -314,3 +314,9 @@ checks precede each graph source read; stale paths do not extend the frontier.
 The Ollama adapter selects exact quotations and returns explicit insufficient evidence when unsupported. Its model digest is checked before/after inference, not atomically pinned. The 6000-byte prompt/schema cap is not a tokenizer measurement. Real local qwen2.5:7b supported/unsupported smoke tests passed; arbitrary paraphrase grounding and production answer quality are not claimed.
 
 References: [Ollama chat](https://docs.ollama.com/api/chat), [model digest listing](https://docs.ollama.com/api/tags).
+
+### Phase8.2: durable answer stages
+
+Nine LangGraph stages are inspectable and PostgreSQL-checkpointed. Operator setup: `uv run python -m openwikirag.checkpoint_cli --grant-role openwikirag_app` using the migration database URL. Requests use the application role and never run checkpoint DDL; SDK tables live in `ow_checkpoints`. Do not expose raw checkpoint storage to clients. External LangSmith tracing is explicitly disabled for answer execution. Source text in historical checkpoints requires the Phase9 retention path.
+
+A fresh real PostgreSQL connection resumed a failed generation stage under a non-superuser role. Source invalidation blocks answer publication. Raw workflow calls must be serialized by the owning service (8.3); they are not a public concurrency-safe API. [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence).

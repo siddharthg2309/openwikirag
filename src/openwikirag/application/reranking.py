@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from openwikirag.application.deduplication import evidence_identity
 from openwikirag.application.evidence import ResolvedEvidence
 from openwikirag.application.retrieval import RetrievalInputError, SearchRequest
+from openwikirag.application.source_evidence import SourceEvidence
 
 
 class RerankingError(Exception):
@@ -113,3 +114,42 @@ class RerankingService:
             )
             for rank, index in enumerate(order, start=1)
         )
+
+    async def rank_sources(
+        self,
+        *,
+        tenant_id: UUID,
+        query: str,
+        evidence: tuple[SourceEvidence, ...],
+        limit: int = 10,
+    ) -> tuple[SourceEvidence, ...]:
+        """Rank vector and graph passages with the same bounded provider contract."""
+        if type(limit) is not int or not 1 <= limit <= self.config.max_candidates:
+            raise RerankingInputError("Invalid source result limit.")
+        try:
+            normalized = SearchRequest(tenant_id=tenant_id, query=query).normalized_query
+            evidence = tuple(SourceEvidence.model_validate(item.model_dump()) for item in evidence)
+        except (ValueError, AttributeError, RetrievalInputError) as exc:
+            raise RerankingInputError("Invalid source evidence.") from exc
+        if (
+            len(evidence) > self.config.max_candidates
+            or len({item.identity for item in evidence}) != len(evidence)
+            or any(item.tenant_id != tenant_id for item in evidence)
+            or any(len(item.chunk.text) > self.config.max_passage_characters for item in evidence)
+        ):
+            raise RerankingInputError("Foreign, duplicate or oversized sources.")
+        if not evidence:
+            return ()
+        try:
+            async with asyncio.timeout(self.config.timeout_seconds):
+                scores = await self.provider.score(
+                    tuple((normalized, item.chunk.text) for item in evidence)
+                )
+            if len(scores) != len(evidence) or any(
+                type(score) not in (float, int) or not math.isfinite(score) for score in scores
+            ):
+                raise ValueError("Expected one finite score per source.")
+        except Exception as exc:
+            raise RerankingProviderError("The reranking provider failed.") from exc
+        order = sorted(range(len(scores)), key=lambda index: (-scores[index], index))[:limit]
+        return tuple(evidence[index] for index in order)

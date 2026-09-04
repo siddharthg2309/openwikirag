@@ -452,3 +452,9 @@ Learning is pending; no scale, latency, broad relevance or resume-readiness infe
 9 focused tests passed including real qwen2.5:7b supported and unsupported questions (16.98s). PG/Qdrant/Neo4j-enabled suite: 361 passed, 4 skips, 2 warnings (19.54s); model smoke separately enabled. Ruff/mypy 124 files passed. Digest expected 845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e; no model files or aliases changed. No quality/production latency claim.
 Evidence files: application/answers.py; infrastructure/ollama.py; apps/worker/tests/test_answers.py; pyproject.toml; uv.lock.
 Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
+
+## Slice 8.2 — Durable typed LangGraph answer workflow (2026-09-04)
+
+6 focused tests passed (3.94s), including fresh real PostgreSQL connection resume/read/delete under non-superuser openwikirag_rls_test, stale source denial, user/tenant/provider isolation, and graph-source rerank/nonfinite rejection. Service-enabled full suite 367 passed/4 skips/1 warning (24.82s). Ruff/mypy128 files, lock, diff, checkpoint CLI/grants and Alembic drift check passed. LangGraph1.2.11, postgres-checkpointer3.1.2, psycopg3.3.5. Independent reviewer did not complete inspection; no independent clean-review claim.
+Evidence files: application/workflow.py; application/reranking.py; infrastructure/checkpoints.py; checkpoint_cli.py; apps/worker/tests/test_workflow.py; pyproject.toml; uv.lock.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
