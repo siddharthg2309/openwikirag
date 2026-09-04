@@ -446,3 +446,9 @@ Learning is pending; no scale, latency, broad relevance or resume-readiness infe
 6 focused cases passed including live Neo4j across3 linked documents. One-hop versus two-hop distinction and connected passages missing initial text/dense-only result proven; stale intermediate cannot extend frontier; foreign/corrupt rejection, filter/hop controls and retryable graph outage/no ack proven. PostgreSQL+Qdrant+Neo4j full suite353 passed,3 skips; Ruff/mypy121 files/diff passed. General NLP extraction/graph ranking quality/scale remain unverified.
 Evidence files: source_evidence.py, graph_retrieval.py, search.py, repositories/knowledge.py, API search dependency/route, worker wiring/config, test_graph_retrieval.py and source fixture helper.
 Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
+
+## Slice 8.1 — Bounded extractive generation and real Ollama provider (2026-09-04)
+
+9 focused tests passed including real qwen2.5:7b supported and unsupported questions (16.98s). PG/Qdrant/Neo4j-enabled suite: 361 passed, 4 skips, 2 warnings (19.54s); model smoke separately enabled. Ruff/mypy 124 files passed. Digest expected 845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e; no model files or aliases changed. No quality/production latency claim.
+Evidence files: application/answers.py; infrastructure/ollama.py; apps/worker/tests/test_answers.py; pyproject.toml; uv.lock.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.

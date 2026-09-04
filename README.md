@@ -308,3 +308,9 @@ unsupported combinations are rejected, not silently widened. Disabled graph
 configuration rejects explicit graph requests. Bounds:10seeds,20visited nodes,
 10neighbors/node,20graph passages,10s deadline. Current-version and succeeded-job
 checks precede each graph source read; stale paths do not extend the frontier.
+
+### Phase 8.1: conservative local-model answers
+
+The Ollama adapter selects exact quotations and returns explicit insufficient evidence when unsupported. Its model digest is checked before/after inference, not atomically pinned. The 6000-byte prompt/schema cap is not a tokenizer measurement. Real local qwen2.5:7b supported/unsupported smoke tests passed; arbitrary paraphrase grounding and production answer quality are not claimed.
+
+References: [Ollama chat](https://docs.ollama.com/api/chat), [model digest listing](https://docs.ollama.com/api/tags).

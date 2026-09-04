@@ -1705,3 +1705,19 @@ Evidence: 6 focused cases passed including live Neo4j across3 linked documents. 
 5. Explain the three-document proof and distinguish it from broad semantic-retrieval quality.
 
 Learner answers: pending.
+
+## Slice 8.1 — Bounded extractive generation and real Ollama provider
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: An LLM selects exact source quotations using request-local E1–E8 labels. The server maps these to canonical identities and offsets and renders only supported quotes. Limit 8 passages, 6000 serialized UTF-8 prompt/schema bytes, two attempts and explicit insufficient-evidence output. This establishes lexical support, not arbitrary paraphrase entailment or relevance accuracy. Ollama uses an expected model digest checked before/after inference; mutable-tag ABA races are not covered. Alternative free-form prose was rejected until claim-level entailment is proven. HTTPx is a runtime dependency for bounded schema-validated local model calls.
+Execution and failures: pack_context validates normalized query, unique tenant-owned source models and byte budget -> Ollama tags check -> JSON-schema chat -> post-check -> validate_draft matches exact visible quote -> server derives citation span and text. Empty evidence bypasses the model. Timeout/network/remote protocol/429/5xx get at most two attempts; malformed output, invented quotes and drift fail closed. Database existence/current-source checks are the next workflow slice, not part of this provider contract.
+Files: application/answers.py; infrastructure/ollama.py; apps/worker/tests/test_answers.py; pyproject.toml; uv.lock.
+Evidence: 9 focused tests passed including real qwen2.5:7b supported and unsupported questions (16.98s). PG/Qdrant/Neo4j-enabled suite: 361 passed, 4 skips, 2 warnings (19.54s); model smoke separately enabled. Ruff/mypy 124 files passed. Digest expected 845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e; no model files or aliases changed. No quality/production latency claim.
+
+1. Why is exact quotation support stronger than citation syntax, yet weaker than proving answer relevance?
+2. Trace E1 from prompt passage to canonical document/version/chunk and offset.
+3. Which failures retry, and why do invented citations not retry?
+4. What does the 6000-byte budget guarantee, and what does it not measure?
+5. Explain the mutable-tag provenance limitation and this slice honestly in an interview.
+
+Learner answers: pending.
