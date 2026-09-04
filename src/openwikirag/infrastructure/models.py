@@ -333,8 +333,10 @@ class WikiGenerationArtifact(Base):
             name="uq_wiki_generation_artifact_identity",
         ),
         UniqueConstraint(
+            "tenant_id",
+            "document_version_id",
             "result_checksum_sha256",
-            name="uq_wiki_generation_artifact_result_checksum",
+            name="uq_wiki_generation_artifact_owned_checksum",
         ),
         UniqueConstraint(
             "artifact_object_key",

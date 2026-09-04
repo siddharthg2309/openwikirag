@@ -428,3 +428,9 @@ Learning is pending; no scale, latency, broad relevance or resume-readiness infe
 4 focused graph cases and 21 worker-consumer cases passed. PostgreSQL16 isolated instance: migrations0001–0010 applied; alembic check no upgrade drift (existing cyclic document/version FK warning). Live PostgreSQL non-superuser worker graph commit/current canonical search/replay passed. Combined PostgreSQL+Qdrant suite343 passed,3 skips; Ruff/mypy113 files/diff passed. No existing database volumes changed. Neo4j not yet exercised.
 Evidence files: application/knowledge.py, wiki_ingestion.py, repositories/knowledge.py, models.py, migrations/versions/0010_knowledge_artifacts.py, test_knowledge.py, test_knowledge_postgres.py.
 Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
+
+## Slice 7.2a — Tenant/version-scoped generation checksum (2026-09-04)
+
+New two-tenant worker regression failed before the fix (second job dead_letter), then passed. Focused regression plus repeated real PostgreSQL graph-worker integration:2 passed. PostgreSQL0011 migration and alembic check passed; Ruff/mypy118 files/diff passed. Current Neo4j slice remains pending its final regression.
+Evidence files: models.py generation constraint, migrations/versions/0011_generation_checksum_scope.py, test_generation_checksum_scope.py; test_knowledge_postgres.py.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.

@@ -1657,3 +1657,19 @@ Evidence: 4 focused graph cases and 21 worker-consumer cases passed. PostgreSQL1
 5. Explain safe graph rebuilding and the current verification boundary in an interview.
 
 Learner answers: pending.
+
+## Slice 7.2a — Tenant/version-scoped generation checksum
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: Replace global generation-result checksum uniqueness with tenant/version/checksum uniqueness; preserve generation identity/object keys. Content equality cannot confer or block ownership. This supersedes the global-checksum portion of D-025. Alternative rejected: making test text unique would conceal the defect. Trade-off: downgrade now correctly refuses incompatible duplicates rather than deleting them.
+Execution and failures: Identical bytes in separate tenant-owned versions -> same generated checksum -> separate scoped generation metadata and object keys -> successful worker graph artifacts/jobs. Alembic0011 replaces only the constraint; no rows removed. Existing repository reads remain tenant/version-scoped.
+Files: models.py generation constraint, migrations/versions/0011_generation_checksum_scope.py, test_generation_checksum_scope.py; test_knowledge_postgres.py.
+Evidence: New two-tenant worker regression failed before the fix (second job dead_letter), then passed. Focused regression plus repeated real PostgreSQL graph-worker integration:2 passed. PostgreSQL0011 migration and alembic check passed; Ruff/mypy118 files/diff passed. Current Neo4j slice remains pending its final regression.
+
+1. Why is equal content checksum not equal ownership identity?
+2. Trace identical bytes through two tenants to separate generation rows.
+3. Why did the old global constraint dead-letter the second upload?
+4. Why can a safe downgrade fail after introducing scoped duplicates?
+5. Give a concise interview explanation of this discovered integration defect and its regression proof.
+
+Learner answers: pending.
