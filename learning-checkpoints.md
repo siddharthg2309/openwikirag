@@ -50,6 +50,28 @@ Quiz topics from the original checkpoint: learner partially answered and explici
 
 Learner answers: pending.
 
+## Slice 6.5 — Canonical evidence resolution
+
+Status: unanswered; pause overridden through Phase 9.
+Objective: obtain trustworthy source text for reranking and answers.
+Explanation: a search hit is a pointer, not evidence truth. The resolver joins
+manifest, normalized artifact, version, and document rows inside the tenant,
+checks source/pipeline/current-version lineage, reads the database-owned object
+key, verifies checksum and schema/counts, then finds and validates the chunk.
+Verified objects are cached only inside one request; authorization is rechecked.
+Missing/stale evidence is distinct from corruption and dependency outages.
+Trade-off: this reads whole bounded manifests; a chunk-row index may be needed
+at scale. Byte limits protect parsing after storage reads, not network allocation.
+References: D-045, F-044, evidence.py. 11 focused canonical-evidence tests passed. Full Qdrant-enabled suite: 314 passed, 3 external-service skips. Ruff, mypy (99 files), lock and diff checks passed.
+
+1. Why is a Qdrant payload insufficient proof of source text?
+2. Trace a hit through the four-table ownership check and object verification.
+3. What happens if the document becomes historical after its object is cached?
+4. Compare manifest reads with storing indexed canonical chunk rows.
+5. Explain this boundary in two interview sentences, including what remains unverified.
+
+Learner answers: pending.
+
 ## Slice 6.4 — Version-safe evidence deduplication
 
 Status: unanswered; pause overridden through Phase 9.

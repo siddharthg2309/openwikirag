@@ -386,3 +386,11 @@ Before adding a number to the resume:
 
 This is correctness evidence, not a retrieval-quality or production-scale claim.
 Learning remains pending in `learning-checkpoints.md`.
+
+## Slice 6.5 verification — 2026-09-04
+
+11 focused canonical-evidence tests passed. Full Qdrant-enabled suite: 314 passed, 3 external-service skips. Ruff, mypy (99 files), lock and diff checks passed.
+
+Canonical evidence has 4-table tenant/lineage checks, current-version enforcement,
+32 MiB parse limit per object and 64 MiB cumulative resolver limit. These are
+configured bounds, not measured throughput or safe transport-memory guarantees.

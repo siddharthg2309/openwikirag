@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import ChunkManifestArtifact, NormalizedDocumentArtifact
+from ..models import ChunkManifestArtifact, Document, DocumentVersion, NormalizedDocumentArtifact
 
 
 class ChunkManifestArtifactRepository:
@@ -13,6 +13,46 @@ class ChunkManifestArtifactRepository:
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def list_for_evidence(
+        self,
+        *,
+        tenant_id: UUID,
+        document_id: UUID,
+        document_version_id: UUID,
+        source_checksum: str,
+        source_type: str,
+        pipeline_version: str,
+        current_only: bool = True,
+        limit: int = 9,
+    ) -> tuple[ChunkManifestArtifact, ...]:
+        """Resolve projection lineage through all canonical tenant-owned parents."""
+        query = (
+            select(ChunkManifestArtifact)
+            .join(
+                NormalizedDocumentArtifact,
+                NormalizedDocumentArtifact.id == ChunkManifestArtifact.normalized_artifact_id,
+            )
+            .join(DocumentVersion, DocumentVersion.id == ChunkManifestArtifact.document_version_id)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .where(
+                ChunkManifestArtifact.tenant_id == tenant_id,
+                NormalizedDocumentArtifact.tenant_id == tenant_id,
+                DocumentVersion.tenant_id == tenant_id,
+                Document.tenant_id == tenant_id,
+                Document.id == document_id,
+                DocumentVersion.id == document_version_id,
+                DocumentVersion.source_type == source_type,
+                DocumentVersion.pipeline_version == pipeline_version,
+                NormalizedDocumentArtifact.document_version_id == document_version_id,
+                NormalizedDocumentArtifact.content_checksum_sha256 == source_checksum,
+                ChunkManifestArtifact.source_artifact_checksum == source_checksum,
+            )
+        )
+        if current_only:
+            query = query.where(Document.current_version_id == DocumentVersion.id)
+        rows = await self._session.scalars(query.order_by(ChunkManifestArtifact.id).limit(limit))
+        return tuple(rows)
 
     async def get_normalized_artifact(
         self,
