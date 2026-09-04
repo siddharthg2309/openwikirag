@@ -379,3 +379,10 @@ Before adding a number to the resume:
 - [ ] The number describes the tested scope, not an unmeasured production claim.
 - [ ] The learner can explain how the metric was calculated and what could make it misleading.
 - [ ] The corresponding implementation and test evidence still exists.
+
+## Slice 6.4 verification — 2026-09-04
+
+11 focused deduplication tests passed; full suite: 301 passed, 5 external-service skips. Ruff, mypy (97 files), lock and diff checks passed. No service, model, or migration was added; semantic redundancy and relevance are unmeasured.
+
+This is correctness evidence, not a retrieval-quality or production-scale claim.
+Learning remains pending in `learning-checkpoints.md`.

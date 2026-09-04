@@ -6,6 +6,12 @@ Read the implementation and learning blueprint first:
 
 - [`docs/OPENWIKIRAG_ENGINEERING_GUIDE.md`](docs/OPENWIKIRAG_ENGINEERING_GUIDE.md)
 - [`metrics.md`](metrics.md) — verified metrics and resume evidence ledger
+- [`learning-checkpoints.md`](learning-checkpoints.md) — deferred slice objectives, flows, and quizzes
+
+Slice 6.4 adds version-safe evidence deduplication after RRF: repeated vector
+projections of one tenant/version/chunk share a representative, retain their
+explanations, and cannot inflate its score. Distinct versions and passages are
+preserved; conflicting source provenance fails closed.
 
 ## Local quickstart
 
