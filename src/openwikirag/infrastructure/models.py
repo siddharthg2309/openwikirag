@@ -438,6 +438,32 @@ class WikiPageArtifact(Base):
     )
 
 
+class KnowledgeArtifactRow(Base):
+    """Canonical relationship facts; Neo4j is only a derived projection."""
+
+    __tablename__ = "knowledge_artifacts"
+    __table_args__ = (UniqueConstraint(
+        "tenant_id", "manifest_id", "extractor", name="uq_knowledge_manifest_extractor",
+    ),)
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    document_version_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False,
+    )
+    manifest_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("chunk_manifest_artifacts.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    extractor: Mapped[str] = mapped_column(String(64), nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=False,
+    )
+
+
 class IngestionJob(Base):
     """Durable pending work record; delivery and lease handling come later."""
 

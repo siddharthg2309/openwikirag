@@ -1641,3 +1641,19 @@ Evidence: 3 focused tests; 337 passing/4 skipped Qdrant-enabled full suite; Ruff
 5. How would you explain these numbers without implying held-out enterprise accuracy?
 
 Learner answers: pending.
+
+## Slice 7.1 — Canonical evidence-backed graph artifacts
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: Persist immutable graph JSON in PostgreSQL before deriving Neo4j. Normalize entity names with Unicode NFKC/casefold/space collapse and tenant-specific IDs; parse four explicit annotation predicates, not arbitrary NLP. Keep exact parent-chunk quotation and offsets. Alternative rejected: Neo4j as canonical truth, unsupported inferred facts. Trade-off: limited extraction recall, no synonym/entity-type disambiguation; artifacts cap 1,000 entities/facts.
+Execution and failures: WikiIngestionHandler -> vector manifest -> explicit async job refresh (artifact replay may rollback/expire ORM state) -> KnowledgeArtifactService.build -> tenant/version/normalized joins -> checksum-verified manifest -> parent-chunk parser -> validated artifact -> KnowledgeRepository.put nested insert or immutable compare -> consumer success commit -> Redis ack. Repository never commits; graph errors rollback before retry mapping. Foreign sources fail before objects; corruption/conflicts fail closed.
+Files: application/knowledge.py, wiki_ingestion.py, repositories/knowledge.py, models.py, migrations/versions/0010_knowledge_artifacts.py, test_knowledge.py, test_knowledge_postgres.py.
+Evidence: 4 focused graph cases and 21 worker-consumer cases passed. PostgreSQL16 isolated instance: migrations0001–0010 applied; alembic check no upgrade drift (existing cyclic document/version FK warning). Live PostgreSQL non-superuser worker graph commit/current canonical search/replay passed. Combined PostgreSQL+Qdrant suite343 passed,3 skips; Ruff/mypy113 files/diff passed. No existing database volumes changed. Neo4j not yet exercised.
+
+1. Why are canonical graph artifacts separate from Neo4j projections?
+2. Trace one annotated relationship into entity IDs, a fact and its evidence offsets.
+3. Why must an expired async ORM job be refreshed after manifest replay?
+4. What does explicit annotation extraction gain and lose compared with an LLM extractor?
+5. Explain safe graph rebuilding and the current verification boundary in an interview.
+
+Learner answers: pending.

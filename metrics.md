@@ -422,3 +422,9 @@ Ruff, mypy (106 files), diff checks passed. This supersedes the earlier 333 coun
 3 focused tests; 337 passing/4 skipped Qdrant-enabled full suite; Ruff/mypy (109 files)/diff passed. Actual authored corpus:10 documents/8 queries,k=3,window=10. Dense Recall/MRR/nDCG=0.375/0.3125/0.328866; sparse=1.0/1.0/0.997855; hybrid=0.875/0.8125/0.826721; real pinned reranker=0.9375/1.0/0.989665. Sparse outperformed hybrid and reranked recall/nDCG on this fixture. Default dense remains hash-based, not semantic. Reproduce via README CLI.
 Evidence files: application/evaluation.py, evaluation_cli.py, evals/retrieval.json, evals/retrieval-results-2026-09-04.json, test_evaluation.py.
 Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
+
+## Slice 7.1 — Canonical evidence-backed graph artifacts (2026-09-04)
+
+4 focused graph cases and 21 worker-consumer cases passed. PostgreSQL16 isolated instance: migrations0001–0010 applied; alembic check no upgrade drift (existing cyclic document/version FK warning). Live PostgreSQL non-superuser worker graph commit/current canonical search/replay passed. Combined PostgreSQL+Qdrant suite343 passed,3 skips; Ruff/mypy113 files/diff passed. No existing database volumes changed. Neo4j not yet exercised.
+Evidence files: application/knowledge.py, wiki_ingestion.py, repositories/knowledge.py, models.py, migrations/versions/0010_knowledge_artifacts.py, test_knowledge.py, test_knowledge_postgres.py.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.

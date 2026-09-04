@@ -265,3 +265,20 @@ Corpus/qrels: `evals/retrieval.json`; measured output:
 k=3, candidate window=10. This is not a held-out benchmark or production workload.
 Sparse outperformed hybrid on this fixture; the hash-based dense model is not a
 semantic encoder. Model replacement must be evaluated against this baseline.
+
+### Canonical graph facts (Slice 7.1)
+
+Apply Alembic migration `0010_knowledge_artifacts` before running the updated
+worker. After vector projection, the worker records a bounded PostgreSQL graph
+artifact before job success. Supported explicit source lines:
+
+```text
+[Aurora] --calls--> [Borealis]
+[Borealis] --depends_on--> [Cygnus]
+[Aurora] --uses--> [Cache]
+[Service] --owned_by--> [Platform Team]
+```
+
+Entity normalization is deterministic; every fact retains its source quotation
+and exact offsets. Arbitrary prose extraction and alias disambiguation are not
+implemented. Documents without these annotations produce an empty graph artifact.

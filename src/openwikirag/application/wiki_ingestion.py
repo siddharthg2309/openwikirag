@@ -8,6 +8,7 @@ from openwikirag.application.extraction import (
     ExtractorRegistry,
 )
 from openwikirag.application.ingestion import PermanentJobError, RetryableJobError
+from openwikirag.application.knowledge import KnowledgeArtifactService, KnowledgeError
 from openwikirag.application.metadata import DeterministicMetadataExtractor, MetadataExtractionError
 from openwikirag.application.normalized_artifacts import (
     DocumentVersionNotFoundError,
@@ -64,6 +65,7 @@ class WikiIngestionHandler:
         extractors: ExtractorRegistry = DEFAULT_EXTRACTOR_REGISTRY,
     ) -> None:
         self._session = session
+        self._storage = storage
         self._config_hash = config_hash
         self._normalized = NormalizedArtifactService(
             session,
@@ -164,7 +166,7 @@ class WikiIngestionHandler:
         job.current_step = "index_vectors"
         await self._session.flush()
         try:
-            await self._vector_ingestion.project(
+            projection = await self._vector_ingestion.project(
                 tenant_id=job.tenant_id,
                 document_id=normalized.document_id,
                 document_version_id=job.document_version_id,
@@ -178,6 +180,17 @@ class WikiIngestionHandler:
         except VectorIngestionInputError as exc:
             await self._session.rollback()
             raise PermanentJobError("The vector projection is invalid.") from exc
+
+        # Reused manifest persistence may rollback and expire ORM attributes.
+        await self._session.refresh(job)
+        job.current_step = "knowledge_artifact"
+        try:
+            await KnowledgeArtifactService(self._session, self._storage).build(
+                tenant_id=job.tenant_id, manifest_id=projection.manifest_artifact_id,
+            )
+        except KnowledgeError as exc:
+            await self._session.rollback()
+            raise RetryableJobError("Canonical graph construction will be retried.") from exc
 
 
 def _map_normalization_error(error: Exception) -> Exception:
