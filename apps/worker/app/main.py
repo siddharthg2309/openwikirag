@@ -24,6 +24,7 @@ from openwikirag.application.ocr import (
     TesseractOcrEngine,
 )
 from openwikirag.application.outbox import OutboxPublisherService
+from openwikirag.application.vector_ingestion import VectorIngestionConfig
 from openwikirag.application.wiki_generation import DeterministicWikiProvider
 from openwikirag.application.wiki_ingestion import WikiIngestionHandler
 from openwikirag.application.wiki_regeneration import WikiJobRouter, WikiRegenerationHandler
@@ -31,6 +32,7 @@ from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import Settings, get_settings
 from openwikirag.core.logging import configure_logging
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
+from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
 from openwikirag.infrastructure.storage import LocalObjectStorage
 from openwikirag.infrastructure.streams import RedisStreamPublisher
 
@@ -72,7 +74,13 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
     transport = RedisStreamPublisher.from_url(settings.redis_url)
     storage = LocalObjectStorage(Path(settings.object_store_root))
     extractors = build_extractor_registry(settings)
+    vector_config = VectorIngestionConfig()
+    vector_index = QdrantVectorIndex.from_settings(
+        settings,
+        config=QdrantCollectionConfig(vector=vector_config.collection),
+    )
     try:
+        await vector_index.ensure_schema()
         async with session_factory() as session:
             outbox = OutboxPublisherService(
                 session,
@@ -82,14 +90,18 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
             ingestion_handler = WikiIngestionHandler(
                 session,
                 storage,
+                vector_index,
                 config_hash=settings.wiki_generation_config_hash,
+                vector_config=vector_config,
                 provider=DeterministicWikiProvider(),
                 extractors=extractors,
             )
             regeneration_pipeline = WikiIngestionHandler(
                 session,
                 storage,
+                vector_index,
                 config_hash=settings.wiki_regeneration_config_hash,
+                vector_config=vector_config,
                 provider=DeterministicWikiProvider(),
                 extractors=extractors,
             )
@@ -132,8 +144,11 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
             else:
                 await worker.run(stop_event or asyncio.Event())
     finally:
-        await transport.close()
-        await engine.dispose()
+        try:
+            await vector_index.close()
+        finally:
+            await transport.close()
+            await engine.dispose()
 
 
 async def _run_from_cli(*, once: bool) -> None:

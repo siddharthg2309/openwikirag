@@ -17,6 +17,13 @@ from openwikirag.application.normalized_artifacts import (
     NormalizedArtifactStorageError,
 )
 from openwikirag.application.ocr import InvalidOcrRequestError, OcrError
+from openwikirag.application.vector_index import VectorIndex
+from openwikirag.application.vector_ingestion import (
+    VectorIngestionConfig,
+    VectorIngestionDependencyError,
+    VectorIngestionInputError,
+    VectorIngestionService,
+)
 from openwikirag.application.wiki import WikiPageBuilder, WikiPageBuildError
 from openwikirag.application.wiki_generation import (
     DeterministicWikiProvider,
@@ -49,8 +56,10 @@ class WikiIngestionHandler:
         self,
         session: AsyncSession,
         storage: ObjectStorage,
+        vector_index: VectorIndex,
         *,
         config_hash: str,
+        vector_config: VectorIngestionConfig | None = None,
         provider: WikiGenerationProvider | None = None,
         extractors: ExtractorRegistry = DEFAULT_EXTRACTOR_REGISTRY,
     ) -> None:
@@ -68,6 +77,12 @@ class WikiIngestionHandler:
         )
         self._generation_artifacts = WikiGenerationArtifactService(session, storage)
         self._page_artifacts = WikiPageArtifactService(session, storage)
+        self._vector_ingestion = VectorIngestionService(
+            session,
+            storage,
+            vector_index,
+            config=vector_config,
+        )
 
     async def handle(self, *, job: IngestionJob, payload: dict[str, object]) -> None:
         """Run only the claimed job's canonical version; ignore payload ids."""
@@ -145,6 +160,24 @@ class WikiIngestionHandler:
         except WikiPageArtifactError as exc:
             await self._session.rollback()
             raise PermanentJobError("The WikiRAG page artifact is invalid.") from exc
+
+        job.current_step = "index_vectors"
+        await self._session.flush()
+        try:
+            await self._vector_ingestion.project(
+                tenant_id=job.tenant_id,
+                document_id=normalized.document_id,
+                document_version_id=job.document_version_id,
+                normalized_artifact_id=normalized.artifact_id,
+                document=normalized.normalized_document,
+                metadata=metadata,
+                pipeline_version=normalized.pipeline_version,
+            )
+        except VectorIngestionDependencyError as exc:
+            raise RetryableJobError("The vector projection will be retried.") from exc
+        except VectorIngestionInputError as exc:
+            await self._session.rollback()
+            raise PermanentJobError("The vector projection is invalid.") from exc
 
 
 def _map_normalization_error(error: Exception) -> Exception:

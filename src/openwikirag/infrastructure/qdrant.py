@@ -18,6 +18,7 @@ from openwikirag.application.sparse import SparseEmbedding
 from openwikirag.application.vector_index import (
     VectorCollectionConfig,
     VectorIndex,
+    VectorIndexDependencyError,
     VectorIndexError,
     VectorIndexInputError,
     VectorPoint,
@@ -51,7 +52,7 @@ class QdrantAdapterError(VectorIndexError):
     """Base error for Qdrant dependency and schema failures."""
 
 
-class QdrantDependencyError(QdrantAdapterError):
+class QdrantDependencyError(QdrantAdapterError, VectorIndexDependencyError):
     """Raised when a Qdrant operation cannot complete."""
 
     def __init__(self, *, operation: str, message: str) -> None:

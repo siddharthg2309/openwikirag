@@ -85,7 +85,9 @@ class PersistedNormalizedArtifact:
     """Canonical artifact identity returned after persistence or safe reuse."""
 
     artifact_id: UUID
+    document_id: UUID
     document_version_id: UUID
+    pipeline_version: str
     parser_name: str
     parser_version: str
     checksum_sha256: str
@@ -160,6 +162,8 @@ class NormalizedArtifactService:
             )
             existing_result = _result(
                 existing,
+                document_id=version.document_id,
+                pipeline_version=version.pipeline_version,
                 normalized_document=normalized,
                 reused=True,
             )
@@ -209,6 +213,8 @@ class NormalizedArtifactService:
             ):
                 winner_result = _result(
                     winner,
+                    document_id=version.document_id,
+                    pipeline_version=version.pipeline_version,
                     normalized_document=normalized,
                     reused=True,
                 )
@@ -225,6 +231,8 @@ class NormalizedArtifactService:
 
         return _result(
             artifact,
+            document_id=version.document_id,
+            pipeline_version=version.pipeline_version,
             normalized_document=normalized,
             reused=False,
         )
@@ -262,12 +270,16 @@ def _safe_key_component(value: str) -> str:
 def _result(
     artifact: NormalizedDocumentArtifact,
     *,
+    document_id: UUID,
+    pipeline_version: str,
     normalized_document: NormalizedDocument,
     reused: bool,
 ) -> PersistedNormalizedArtifact:
     return PersistedNormalizedArtifact(
         artifact_id=artifact.id,
+        document_id=document_id,
         document_version_id=artifact.document_version_id,
+        pipeline_version=pipeline_version,
         parser_name=artifact.parser_name,
         parser_version=artifact.parser_version,
         checksum_sha256=artifact.content_checksum_sha256,

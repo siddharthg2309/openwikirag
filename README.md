@@ -150,6 +150,15 @@ and supports tenant-scoped create/reuse/read behavior with validated
 round-trips. Live search, hybrid score fusion, worker activation, and retrieval
 quality measurements remain later slices.
 
+Phase 5.9 activates that projection in the durable ingestion worker. After the
+WikiRAG page artifact is committed, the worker creates or verifies one immutable
+parent/child chunk manifest, runs bounded dense and sparse embedding batches,
+and upserts one provenance-only Qdrant point per chunk before marking the job
+successful and acknowledging Redis. A retry reuses the manifest and any points
+written before a failure. The current deterministic hash providers prove
+orchestration and replay behavior, not semantic embedding quality; search,
+fusion, reranking, and projection-performance claims remain deferred.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the

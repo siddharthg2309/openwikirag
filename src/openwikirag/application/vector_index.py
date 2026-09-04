@@ -40,6 +40,10 @@ class VectorIndexConfigurationError(VectorIndexError):
     """Raised when collection geometry or identity is unsupported."""
 
 
+class VectorIndexDependencyError(VectorIndexError):
+    """Raised when the configured vector-store dependency is unavailable."""
+
+
 class VectorPointConflictError(VectorIndexError):
     """Raised when an immutable point id is reused with different bytes."""
 
@@ -381,6 +385,12 @@ class InMemoryVectorIndex:
     def __init__(self) -> None:
         self._points: dict[str, VectorPoint] = {}
 
+    @property
+    def points(self) -> tuple[VectorPoint, ...]:
+        """Expose a stable snapshot for contract and pipeline verification."""
+
+        return tuple(self._points[point_id] for point_id in sorted(self._points))
+
     async def upsert(self, point: VectorPoint) -> VectorUpsertResult:
         """Create a point, reuse identical bytes, or reject an immutable conflict."""
 
@@ -448,6 +458,7 @@ __all__ = [
     "VectorCollectionConfig",
     "VectorIndex",
     "VectorIndexConfigurationError",
+    "VectorIndexDependencyError",
     "VectorIndexError",
     "VectorIndexInputError",
     "VectorPoint",

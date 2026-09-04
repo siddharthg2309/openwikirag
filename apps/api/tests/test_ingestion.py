@@ -27,6 +27,12 @@ from openwikirag.application.ingestion import (
 )
 from openwikirag.application.normalized_artifacts import NormalizedArtifactIngestionHandler
 from openwikirag.application.ocr import OcrPageResult, OcrUnavailableError
+from openwikirag.application.vector_index import (
+    InMemoryVectorIndex,
+    VectorIndexDependencyError,
+    VectorPoint,
+    VectorUpsertResult,
+)
 from openwikirag.application.wiki_generation import WikiGenerationRequest
 from openwikirag.application.wiki_ingestion import WikiIngestionHandler
 from openwikirag.application.wiki_regeneration import (
@@ -36,6 +42,7 @@ from openwikirag.application.wiki_regeneration import (
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import (
     Base,
+    ChunkManifestArtifact,
     Document,
     DocumentVersion,
     IngestionJob,
@@ -158,6 +165,16 @@ class FailingWikiProvider:
     def generate(self, *, request: WikiGenerationRequest) -> object:
         del request
         raise RuntimeError("provider unavailable")
+
+
+class FailingVectorIndex:
+    async def upsert(self, point: VectorPoint) -> VectorUpsertResult:
+        del point
+        raise VectorIndexDependencyError("Qdrant unavailable")
+
+    async def get(self, *, point_id: str, tenant_id: UUID) -> VectorPoint | None:
+        del point_id, tenant_id
+        return None
 
 
 class FakeOcrFallback:
@@ -635,9 +652,11 @@ async def test_wiki_pipeline_persists_all_immutable_artifacts_before_ack(
             },
         )
     )
+    vector_index = InMemoryVectorIndex()
     handler = WikiIngestionHandler(
         session,
         storage,
+        vector_index,
         config_hash="b" * 64,
     )
 
@@ -647,6 +666,7 @@ async def test_wiki_pipeline_persists_all_immutable_artifacts_before_ack(
     normalized = await session.scalar(select(NormalizedDocumentArtifact))
     generation = await session.scalar(select(WikiGenerationArtifact))
     page = await session.scalar(select(WikiPageArtifact))
+    manifest = await session.scalar(select(ChunkManifestArtifact))
     assert refreshed is not None
     assert refreshed.status == "succeeded"
     assert refreshed.current_step == "complete"
@@ -665,6 +685,12 @@ async def test_wiki_pipeline_persists_all_immutable_artifacts_before_ack(
     assert stored_page["generation"]["content"]["summary"]["text"] == (
         "This page is titled Overview."
     )
+    assert manifest is not None
+    assert manifest.normalized_artifact_id == normalized.id
+    assert manifest.chunk_count == len(vector_index.points)
+    assert manifest.parent_count > 0
+    assert manifest.child_count > 0
+    assert all(point.payload.tenant_id == tenant.id for point in vector_index.points)
     assert transport.acknowledged == ["1-0"]
 
 
@@ -679,10 +705,17 @@ async def test_wiki_pipeline_reuses_artifacts_after_artifact_complete_boundary(
         source_type="markdown",
         data=b"# Overview\nOpenWikiRAG uses citations.\n",
     )
-    handler = WikiIngestionHandler(session, storage, config_hash="b" * 64)
+    vector_index = InMemoryVectorIndex()
+    handler = WikiIngestionHandler(
+        session,
+        storage,
+        vector_index,
+        config_hash="b" * 64,
+    )
 
     # Simulate a worker crash after all artifact commits but before job success.
     await handler.handle(job=job, payload={})
+    projected_point_count = len(vector_index.points)
     transport = FakeTransport()
     transport.new_messages.append(make_message(tenant.id, job.id))
 
@@ -694,6 +727,8 @@ async def test_wiki_pipeline_reuses_artifacts_after_artifact_complete_boundary(
     assert await session.scalar(select(func.count(NormalizedDocumentArtifact.id))) == 1
     assert await session.scalar(select(func.count(WikiGenerationArtifact.id))) == 1
     assert await session.scalar(select(func.count(WikiPageArtifact.id))) == 1
+    assert await session.scalar(select(func.count(ChunkManifestArtifact.id))) == 1
+    assert len(vector_index.points) == projected_point_count
     assert transport.acknowledged == ["1-0"]
 
 
@@ -708,7 +743,13 @@ async def test_wiki_regeneration_creates_new_version_and_preserves_old_page(
         source_type="markdown",
         data=b"# Overview\nOpenWikiRAG uses citations.\n",
     )
-    initial_handler = WikiIngestionHandler(session, storage, config_hash="b" * 64)
+    vector_index = InMemoryVectorIndex()
+    initial_handler = WikiIngestionHandler(
+        session,
+        storage,
+        vector_index,
+        config_hash="b" * 64,
+    )
     await initial_handler.handle(job=initial_job, payload={})
     original_page = await session.scalar(select(WikiPageArtifact))
     assert original_page is not None
@@ -738,6 +779,7 @@ async def test_wiki_regeneration_creates_new_version_and_preserves_old_page(
     regeneration_pipeline = WikiIngestionHandler(
         session,
         storage,
+        vector_index,
         config_hash="c" * 64,
     )
     router = WikiJobRouter(
@@ -796,7 +838,12 @@ async def test_regeneration_event_with_invalid_source_is_dead_lettered(
             },
         )
     )
-    pipeline = WikiIngestionHandler(session, storage, config_hash="c" * 64)
+    pipeline = WikiIngestionHandler(
+        session,
+        storage,
+        InMemoryVectorIndex(),
+        config_hash="c" * 64,
+    )
     router = WikiJobRouter(
         ingestion=pipeline,
         regeneration=WikiRegenerationHandler(session, pipeline),
@@ -856,6 +903,7 @@ async def test_invalid_wiki_output_is_dead_lettered_after_normalization(
     handler = WikiIngestionHandler(
         session,
         storage,
+        InMemoryVectorIndex(),
         config_hash="b" * 64,
         provider=InvalidWikiProvider(),
     )
@@ -888,6 +936,7 @@ async def test_wiki_provider_failure_is_retryable_and_unacknowledged(
     handler = WikiIngestionHandler(
         session,
         storage,
+        InMemoryVectorIndex(),
         config_hash="b" * 64,
         provider=FailingWikiProvider(),
     )
@@ -900,6 +949,38 @@ async def test_wiki_provider_failure_is_retryable_and_unacknowledged(
     assert refreshed.last_error_code == "INGESTION_RETRYABLE_FAILURE"
     assert await session.scalar(select(func.count(NormalizedDocumentArtifact.id))) == 1
     assert await session.scalar(select(func.count(WikiGenerationArtifact.id))) == 0
+    assert transport.acknowledged == []
+
+
+async def test_vector_dependency_failure_is_retryable_and_unacknowledged(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    storage = LocalObjectStorage(tmp_path / "objects")
+    tenant, job = await create_job_with_source(
+        session,
+        storage,
+        source_type="markdown",
+        data=b"# Overview\nBody with searchable evidence.\n",
+    )
+    transport = FakeTransport()
+    transport.new_messages.append(make_message(tenant.id, job.id))
+    handler = WikiIngestionHandler(
+        session,
+        storage,
+        FailingVectorIndex(),
+        config_hash="b" * 64,
+    )
+
+    assert await make_service(session, transport, handler).consume_once() == 1
+
+    refreshed = await session.get(IngestionJob, job.id)
+    assert refreshed is not None
+    assert refreshed.status == "retryable"
+    assert refreshed.last_error_code == "INGESTION_RETRYABLE_FAILURE"
+    assert await session.scalar(select(func.count(NormalizedDocumentArtifact.id))) == 1
+    assert await session.scalar(select(func.count(WikiPageArtifact.id))) == 1
+    assert await session.scalar(select(func.count(ChunkManifestArtifact.id))) == 1
     assert transport.acknowledged == []
 
 
