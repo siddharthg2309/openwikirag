@@ -14,6 +14,12 @@ from pydantic import ValidationError
 from qdrant_client import AsyncQdrantClient, models
 
 from openwikirag.application.embeddings import DenseEmbedding
+from openwikirag.application.retrieval import (
+    MAX_RETRIEVAL_CANDIDATES,
+    RetrievalLeg,
+    SearchCandidate,
+    SearchFilters,
+)
 from openwikirag.application.sparse import SparseEmbedding
 from openwikirag.application.vector_index import (
     VectorCollectionConfig,
@@ -44,6 +50,12 @@ _PAYLOAD_INDEX_FIELDS = frozenset(
         "pipeline_version",
         "page_start",
         "page_end",
+        "dense_provider_identity",
+        "dense_model_identity",
+        "dense_config_checksum_sha256",
+        "sparse_provider_identity",
+        "sparse_model_identity",
+        "sparse_config_checksum_sha256",
     }
 )
 
@@ -97,6 +109,12 @@ DEFAULT_QDRANT_PAYLOAD_INDEXES: tuple[QdrantPayloadIndex, ...] = (
     QdrantPayloadIndex("pipeline_version", "keyword"),
     QdrantPayloadIndex("page_start", "integer"),
     QdrantPayloadIndex("page_end", "integer"),
+    QdrantPayloadIndex("dense_provider_identity", "keyword"),
+    QdrantPayloadIndex("dense_model_identity", "keyword"),
+    QdrantPayloadIndex("dense_config_checksum_sha256", "keyword"),
+    QdrantPayloadIndex("sparse_provider_identity", "keyword"),
+    QdrantPayloadIndex("sparse_model_identity", "keyword"),
+    QdrantPayloadIndex("sparse_config_checksum_sha256", "keyword"),
 )
 
 
@@ -225,6 +243,67 @@ class QdrantVectorIndex(VectorIndex):
             return None
         return _from_qdrant_record(record, expected_collection=self._config.vector)
 
+    async def search_dense(
+        self,
+        *,
+        tenant_id: UUID,
+        query: DenseEmbedding,
+        filters: SearchFilters,
+        limit: int,
+    ) -> tuple[SearchCandidate, ...]:
+        """Query the named dense vector under mandatory tenant/model filters."""
+
+        _validate_candidate_query(
+            tenant_id=tenant_id,
+            query=query,
+            filters=filters,
+            limit=limit,
+            collection=self._config.vector,
+        )
+        return await self._query_candidates(
+            query=list(query.vector),
+            query_filter=_build_query_filter(
+                tenant_id=tenant_id,
+                query=query,
+                filters=filters,
+                leg="dense",
+            ),
+            leg="dense",
+            limit=limit,
+        )
+
+    async def search_sparse(
+        self,
+        *,
+        tenant_id: UUID,
+        query: SparseEmbedding,
+        filters: SearchFilters,
+        limit: int,
+    ) -> tuple[SearchCandidate, ...]:
+        """Query the named sparse vector under mandatory tenant/model filters."""
+
+        _validate_candidate_query(
+            tenant_id=tenant_id,
+            query=query,
+            filters=filters,
+            limit=limit,
+            collection=self._config.vector,
+        )
+        return await self._query_candidates(
+            query=models.SparseVector(
+                indices=list(query.indices),
+                values=list(query.values),
+            ),
+            query_filter=_build_query_filter(
+                tenant_id=tenant_id,
+                query=query,
+                filters=filters,
+                leg="sparse",
+            ),
+            leg="sparse",
+            limit=limit,
+        )
+
     async def close(self) -> None:
         """Close the owned asynchronous Qdrant client."""
 
@@ -253,6 +332,184 @@ class QdrantVectorIndex(VectorIndex):
         except Exception as exc:
             raise QdrantDependencyError(operation="retrieve", message=str(exc)) from exc
         return records[0] if records else None
+
+    async def _query_candidates(
+        self,
+        *,
+        query: list[float] | models.SparseVector,
+        query_filter: models.Filter,
+        leg: RetrievalLeg,
+        limit: int,
+    ) -> tuple[SearchCandidate, ...]:
+        try:
+            response = await self._client.query_points(
+                collection_name=self._config.vector.collection_name,
+                query=query,
+                using=leg,
+                query_filter=query_filter,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception as exc:
+            raise QdrantDependencyError(
+                operation=f"{leg} candidate search",
+                message=str(exc),
+            ) from exc
+        return _from_qdrant_scored_points(response.points, leg=leg, limit=limit)
+
+
+def _validate_candidate_query(
+    *,
+    tenant_id: UUID,
+    query: DenseEmbedding | SparseEmbedding,
+    filters: SearchFilters,
+    limit: int,
+    collection: VectorCollectionConfig,
+) -> None:
+    if not isinstance(tenant_id, UUID):
+        raise VectorIndexInputError("Qdrant candidate searches require a UUID tenant id.")
+    if not isinstance(filters, SearchFilters):
+        raise VectorIndexInputError("Qdrant candidate searches require validated filters.")
+    if (
+        type(limit) is not int
+        or not 1 <= limit <= MAX_RETRIEVAL_CANDIDATES
+    ):
+        raise VectorIndexInputError(
+            f"Qdrant candidate limits must be between 1 and {MAX_RETRIEVAL_CANDIDATES}."
+        )
+    if isinstance(query, DenseEmbedding):
+        if (
+            query.dimensions != collection.dense_dimensions
+            or query.distance_metric != collection.dense_distance_metric
+        ):
+            raise QdrantSchemaConflictError(
+                "Dense query geometry does not match the Qdrant collection."
+            )
+        return
+    if isinstance(query, SparseEmbedding):
+        if (
+            query.index_space_size != collection.sparse_index_space_size
+            or query.distance_metric != collection.sparse_distance_metric
+        ):
+            raise QdrantSchemaConflictError(
+                "Sparse query geometry does not match the Qdrant collection."
+            )
+        return
+    raise VectorIndexInputError(
+        "Qdrant candidate searches require a dense or sparse embedding."
+    )
+
+
+def _build_query_filter(
+    *,
+    tenant_id: UUID,
+    query: DenseEmbedding | SparseEmbedding,
+    filters: SearchFilters,
+    leg: RetrievalLeg,
+) -> models.Filter:
+    must: list[models.Condition] = [
+        _match_value("tenant_id", str(tenant_id)),
+        _match_value(f"{leg}_provider_identity", query.provider_identity),
+        _match_value(f"{leg}_model_identity", query.model_identity),
+        _match_value(
+            f"{leg}_config_checksum_sha256",
+            query.config_checksum_sha256,
+        ),
+    ]
+    if filters.document_ids:
+        must.append(_match_uuid_any("document_id", filters.document_ids))
+    if filters.document_version_ids:
+        must.append(
+            _match_uuid_any("document_version_id", filters.document_version_ids)
+        )
+    keyword_filters = (
+        ("source_type", filters.source_types),
+        ("language", filters.languages),
+        ("chunk_kind", filters.chunk_kinds),
+        ("pipeline_version", filters.pipeline_versions),
+    )
+    must.extend(
+        models.FieldCondition(
+            key=field_name,
+            match=models.MatchAny(any=list(values)),
+        )
+        for field_name, values in keyword_filters
+        if values
+    )
+    return models.Filter(must=must)
+
+
+def _match_value(field_name: str, value: str) -> models.FieldCondition:
+    return models.FieldCondition(
+        key=field_name,
+        match=models.MatchValue(value=value),
+    )
+
+
+def _match_uuid_any(field_name: str, values: tuple[UUID, ...]) -> models.Condition:
+    matches: list[models.Condition] = [
+        _match_value(field_name, str(value))
+        for value in values
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    return models.Filter(should=matches)
+
+
+def _from_qdrant_scored_points(
+    points: object,
+    *,
+    leg: RetrievalLeg,
+    limit: int,
+) -> tuple[SearchCandidate, ...]:
+    if not isinstance(points, list) or len(points) > limit:
+        raise QdrantDataIntegrityError("Qdrant returned an invalid candidate list.")
+    parsed: list[tuple[str, float, VectorPointPayload]] = []
+    try:
+        for scored in points:
+            if not isinstance(scored, models.ScoredPoint) or scored.payload is None:
+                raise QdrantDataIntegrityError(
+                    "Qdrant candidate is missing score or payload data."
+                )
+            point_id = str(scored.id)
+            _validate_point_id(point_id)
+            payload_data = cast(dict[str, object], dict(scored.payload))
+            stored_checksum = payload_data.pop(_POINT_CHECKSUM_FIELD, None)
+            if (
+                not isinstance(stored_checksum, str)
+                or len(stored_checksum) != 64
+                or any(character not in "0123456789abcdef" for character in stored_checksum)
+            ):
+                raise QdrantDataIntegrityError(
+                    "Qdrant candidate is missing its point checksum."
+                )
+            parsed.append((point_id, float(scored.score), _validate_payload(payload_data)))
+    except QdrantDataIntegrityError:
+        raise
+    except (TypeError, ValueError, ValidationError, VectorIndexInputError) as exc:
+        raise QdrantDataIntegrityError(
+            "Qdrant candidate violates the application contract."
+        ) from exc
+    point_ids = tuple(point_id for point_id, _score, _payload in parsed)
+    if len(point_ids) != len(set(point_ids)):
+        raise QdrantDataIntegrityError("Qdrant returned duplicate candidate points.")
+    ordered = sorted(parsed, key=lambda item: (-item[1], item[0]))
+    try:
+        return tuple(
+            SearchCandidate(
+                point_id=point_id,
+                leg=leg,
+                rank=rank,
+                score=score,
+                payload=payload,
+            )
+            for rank, (point_id, score, payload) in enumerate(ordered, start=1)
+        )
+    except ValidationError as exc:
+        raise QdrantDataIntegrityError(
+            "Qdrant candidate score or rank is invalid."
+        ) from exc
 
 
 def _validate_collection_schema(info: object, config: VectorCollectionConfig) -> None:

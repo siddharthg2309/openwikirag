@@ -144,11 +144,11 @@ reuse, or fail with an immutable conflict, while tenant filters and
 tenant-scoped reads fail closed. The application has no Qdrant SDK dependency;
 Phase 5.8 activates the live projection adapter with pinned `qdrant-client`
 1.14.3 against the local Qdrant 1.14.1 service. It provisions one named dense
-cosine vector and one named sparse vector, creates and validates 10 indexed
+cosine vector and one named sparse vector, creates and validates 16 indexed
 tenant/document/provenance payload fields, uses deterministic UUID point ids,
 and supports tenant-scoped create/reuse/read behavior with validated
-round-trips. Live search, hybrid score fusion, worker activation, and retrieval
-quality measurements remain later slices.
+round-trips. Hybrid score fusion and retrieval-quality measurements remain
+later slices.
 
 Phase 5.9 activates that projection in the durable ingestion worker. After the
 WikiRAG page artifact is committed, the worker creates or verifies one immutable
@@ -156,8 +156,8 @@ parent/child chunk manifest, runs bounded dense and sparse embedding batches,
 and upserts one provenance-only Qdrant point per chunk before marking the job
 successful and acknowledging Redis. A retry reuses the manifest and any points
 written before a failure. The current deterministic hash providers prove
-orchestration and replay behavior, not semantic embedding quality; search,
-fusion, reranking, and projection-performance claims remain deferred.
+orchestration and replay behavior, not semantic embedding quality; fusion,
+reranking, and projection-performance claims remain deferred.
 
 Phase 6.1 defines the retrieval-side application boundary without coupling it
 to Qdrant. A trusted tenant id, normalized and bounded query, bounded optional
@@ -165,9 +165,19 @@ filters, mode, and candidate limit produce independently ranked dense and
 sparse lists with complete provenance and representation identity. The local
 adapter proves mandatory tenant isolation, deterministic cosine-equivalent and
 sparse-dot scoring, stable tie-breaking, and fail-closed output validation.
-Hybrid mode does not fuse scores yet; live Qdrant querying, canonical text
-resolution, fusion, reranking, HTTP authorization, and retrieval-quality
-measurements remain later slices.
+Hybrid mode does not fuse scores; Phase 6.2 below activates its live Qdrant
+adapter, while canonical text resolution, fusion, reranking, HTTP authorization,
+and retrieval-quality measurements remain later slices.
+
+Phase 6.2 activates that candidate boundary on the live Qdrant adapter. Each
+dense or sparse `query_points` call explicitly selects its named vector and
+pushes the trusted tenant, provider/model/configuration identity, and bounded
+optional metadata filters into Qdrant before top-k selection. UUID alternatives
+use nested regular-match OR groups, keyword alternatives use `MatchAny`, and
+only scored payloads—not stored vectors—return for strict application-level
+validation and stable ranking. Local and Qdrant 1.14.1 tests prove tenant,
+filter, and model isolation; cross-leg fusion, canonical text loading,
+reranking, HTTP search, quality evaluation, and latency remain deferred.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
