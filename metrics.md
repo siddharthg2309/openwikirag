@@ -23,12 +23,12 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-04
-Current verified slice: Phase 6, Slice 6.2 — Live tenant-filtered Qdrant candidate search.
+Current verified slice: Phase 6, Slice 6.3 — Explainable reciprocal-rank fusion.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 276 passed, 5 skipped | verified | `uv run pytest` |
-| Automated tests | Qdrant-enabled full suite | 278 passed, 3 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest` |
+| Automated tests | Local test suite | 290 passed, 5 skipped | verified | `uv run pytest` |
+| Automated tests | Qdrant-enabled full suite | 292 passed, 3 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -59,9 +59,10 @@ Current verified slice: Phase 6, Slice 6.2 — Live tenant-filtered Qdrant candi
 | Automated tests | Focused Qdrant adapter tests | 11 passed in a Qdrant-enabled run (10 local-mode cases + 1 real-server case) | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest apps/worker/tests/test_qdrant.py -q` |
 | Automated tests | Focused vector-ingestion and durable-consumer tests | 28 passed against Qdrant 1.14.1 | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest apps/worker/tests/test_vector_ingestion.py apps/api/tests/test_ingestion.py -q` |
 | Automated tests | Focused tenant-scoped retrieval-contract tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_retrieval.py -q` |
+| Automated tests | Focused reciprocal-rank fusion tests | 14 passed | verified | `uv run pytest apps/worker/tests/test_fusion.py -q` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 93 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 95 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0008_scope_page_checksum` | verified | PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Chunk-manifest migration | `0009_chunk_manifests` present in source; PostgreSQL application unverified | implemented | `migrations/versions/0009_chunk_manifests.py` |
@@ -118,10 +119,11 @@ Current verified slice: Phase 6, Slice 6.2 — Live tenant-filtered Qdrant candi
 | Embeddings | In-process model/provider cache | 1 frozen cache key with 4 identity dimensions, 1 frozen capacity configuration, bounded LRU storage, single-flight loading, failed-load suppression, eviction/shutdown cleanup, and cancellation isolation | verified | `EmbeddingModelCache` and 10 focused tests; result caching, distributed cache, and TTL/invalidation deferred; Qdrant projection is verified separately |
 | Vector indexing | Tenant-scoped hybrid projection contract | 1 provider-neutral index port, 1 immutable point schema, 1 collection-geometry identity, 2 named vectors (dense/sparse), 1 explicit tenant filter, and create/reuse/conflict upsert semantics | verified | `VectorPointRequest`, `VectorPoint`, `TenantVectorFilter`, `InMemoryVectorIndex`, and 9 focused tests |
 | Vector indexing | Live Qdrant projection schema | 1 pinned client (`qdrant-client` 1.14.3), 1 named dense cosine vector, 1 named sparse vector, 16 typed payload indexes, and deterministic UUID point ids | verified | `QdrantVectorIndex`; 10 local-mode cases plus 1 Qdrant 1.14.1 real-server case |
-| Vector indexing | Live Qdrant tenant-safe point lifecycle | Create/reuse/immutable-conflict behavior, validated vector/payload round-trip, and 1 foreign-tenant negative read path | verified | Qdrant-enabled full suite: 278 passed, 3 skipped |
-| Vector indexing | Durable worker projection | 1 immutable chunk manifest plus 1 Qdrant point per parent/child chunk; bounded dense/sparse batches; replay reports created/reused counts and completes before job success/Redis ack | verified | 7 focused service tests, 21 consumer tests, and 278 Qdrant-enabled full-suite tests |
-| Retrieval | Provider-neutral candidate boundary | 3 retrieval modes, 6 optional filter dimensions capped at 50 values each, 100-candidate maximum per leg, 4,096-character normalized-query maximum, and 2 independent ranked lists | verified | 19 focused tests and 278 Qdrant-enabled full-suite tests; fusion and quality remain unverified |
-| Retrieval | Live tenant/model-filtered Qdrant candidate search | 2 named query legs, 4 mandatory filter conditions per leg, 6 optional filter dimensions, payload-only results, 16 indexed payload fields, and 2 failure classes | verified | 10 local request/behavior cases, 1 Qdrant 1.14.1 real-server case, and 278 Qdrant-enabled full-suite tests |
+| Vector indexing | Live Qdrant tenant-safe point lifecycle | Create/reuse/immutable-conflict behavior, validated vector/payload round-trip, and 1 foreign-tenant negative read path | verified | Qdrant-enabled full suite: 292 passed, 3 skipped |
+| Vector indexing | Durable worker projection | 1 immutable chunk manifest plus 1 Qdrant point per parent/child chunk; bounded dense/sparse batches; replay reports created/reused counts and completes before job success/Redis ack | verified | 7 focused service tests, 21 consumer tests, and 292 Qdrant-enabled full-suite tests |
+| Retrieval | Provider-neutral candidate boundary | 3 retrieval modes, 6 optional filter dimensions capped at 50 values each, 100-candidate maximum per leg, 4,096-character normalized-query maximum, and 2 independent ranked lists | verified | 19 focused tests and 292 Qdrant-enabled full-suite tests; quality remains unverified |
+| Retrieval | Live tenant/model-filtered Qdrant candidate search | 2 named query legs, 4 mandatory filter conditions per leg, 6 optional filter dimensions, payload-only results, 16 indexed payload fields, and 2 failure classes | verified | 10 local request/behavior cases, 1 Qdrant 1.14.1 real-server case, and 292 Qdrant-enabled full-suite tests |
+| Retrieval | Explainable reciprocal-rank fusion | 1 standard formula, configurable `k` from 1-1,000 (default 60), up to 100 fused points, 2 leg contributions per point, exact point-id deduplication, and 3 deterministic sort keys | verified | 14 focused tests and 292 Qdrant-enabled full-suite tests; relevance improvement remains unmeasured |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |
@@ -340,11 +342,11 @@ versions rather than pretending to have scale results.
 
 - Defined **1 provider-neutral tenant-scoped hybrid vector-index port** with **1 immutable point schema**, **2 named vectors** (dense and sparse), **1 collection geometry identity**, **1 explicit tenant payload filter**, provenance-only payloads, deterministic point ids, and create/reuse/immutable-conflict upsert behavior; verified with **9 focused tests** and **240 local tests**.
 
-- Activated **1 asynchronous live Qdrant projection and candidate-search adapter** using **qdrant-client 1.14.3** against Qdrant 1.14.1, with **2 named query legs**, **16 typed payload indexes**, deterministic UUID point ids, schema conflict detection, immutable create/reuse behavior, and tenant/model/filter-safe top-k selection; verified with **11 focused adapter tests** and **278 Qdrant-enabled full-suite tests**. Fusion, retrieval quality, and performance measurements remain deferred.
+- Activated **1 asynchronous live Qdrant projection and candidate-search adapter** using **qdrant-client 1.14.3** against Qdrant 1.14.1, with **2 named query legs**, **16 typed payload indexes**, deterministic UUID point ids, schema conflict detection, immutable create/reuse behavior, and tenant/model/filter-safe top-k selection; verified with **11 focused adapter tests** and **292 Qdrant-enabled full-suite tests**. Application RRF is verified separately; retrieval quality and performance remain unmeasured.
 
-- Extended the durable ingestion worker through **4 immutable artifact layers** (normalized text, WikiRAG generation, page, and chunk manifest), bounded dense/sparse embedding, and **1 provenance-only Qdrant point per parent/child chunk** before job success and Redis acknowledgement; verified with **28 focused tests** and **278 Qdrant-enabled full-suite tests**, including partial-write replay and unacknowledged dependency failure. Semantic quality, fusion, reranking, and throughput remain unmeasured.
+- Extended the durable ingestion worker through **4 immutable artifact layers** (normalized text, WikiRAG generation, page, and chunk manifest), bounded dense/sparse embedding, and **1 provenance-only Qdrant point per parent/child chunk** before job success and Redis acknowledgement; verified with **28 focused tests** and **292 Qdrant-enabled full-suite tests**, including partial-write replay and unacknowledged dependency failure. Semantic quality, reranking, and throughput remain unmeasured.
 
-- Defined and activated **1 provider-neutral tenant-scoped retrieval boundary** with **3 modes**, **2 independent named-vector legs**, **6 bounded optional filter dimensions**, mandatory tenant plus provider/model/configuration selection, stable ranking, and fail-closed payload validation; verified with **30 focused retrieval/Qdrant tests** and **278 Qdrant-enabled full-suite tests**. Cross-leg fusion, canonical evidence loading, reranking, retrieval quality, and latency remain unmeasured.
+- Defined and activated **1 provider-neutral tenant-scoped retrieval boundary** with **3 modes**, **2 independently ranked named-vector legs**, **6 bounded optional filter dimensions**, and explainable RRF using configurable `k`; exact point identities are deduplicated with per-leg contribution traces and fail-closed provenance checks; verified with **44 focused retrieval/Qdrant/fusion tests** and **292 Qdrant-enabled full-suite tests**. Canonical evidence loading, reranking, retrieval quality, and latency remain unmeasured.
 
 ### Future measured bullets
 

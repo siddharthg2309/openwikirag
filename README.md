@@ -176,8 +176,19 @@ optional metadata filters into Qdrant before top-k selection. UUID alternatives
 use nested regular-match OR groups, keyword alternatives use `MatchAny`, and
 only scored payloads—not stored vectors—return for strict application-level
 validation and stable ranking. Local and Qdrant 1.14.1 tests prove tenant,
-filter, and model isolation; cross-leg fusion, canonical text loading,
-reranking, HTTP search, quality evaluation, and latency remain deferred.
+filter, and model isolation. The adapter deliberately leaves cross-leg policy
+to the application; canonical text loading, reranking, HTTP search, quality
+evaluation, and latency remain deferred.
+
+Phase 6.3 adds application-owned Reciprocal Rank Fusion. It deduplicates exact
+point identities across dense and sparse lists and calculates each fused score
+as the sum of `1 / (k + source_rank)`, avoiding any assumption that cosine and
+sparse-dot raw scores share a scale. Every result retains its per-leg rank, raw
+score, and RRF contribution, while ties resolve by best source rank and stable
+point id. The default `k` is 60, both `k` and the final result limit are bounded
+configuration, and conflicting provenance for the same point fails closed.
+This verifies fusion mechanics only; no Recall@k, MRR, nDCG, or latency
+improvement is claimed before a labeled evaluation.
 
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
