@@ -20,6 +20,9 @@ dependencies = [
   "qdrant-client==1.14.3",
 ]
 
+[project.optional-dependencies]
+models = ["sentence-transformers>=5.1,<6.0"]
+
 [dependency-groups]
 dev = [
   "httpx>=0.28,<1.0",

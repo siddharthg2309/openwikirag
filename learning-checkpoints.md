@@ -1577,3 +1577,27 @@ Quiz topics from the original checkpoint: explain why rank fusion avoids raw-sco
 5. Interview: explain this slice in two sentences, naming its proof and one limitation. What can you honestly claim today?
 
 Learner answers: pending.
+
+## Slice 6.6 — Bounded cross-encoder reranking
+
+Status: unanswered; checkpoint overridden through Phase 9.
+Objective: improve the ordering of retrieved canonical passages.
+Explanation: a bi-encoder embeds query and document separately; a cross-encoder
+reads a pair jointly and produces a relevance score. Candidate retrieval finds
+a small set first because pair scoring across the whole corpus is expensive.
+Flow: RerankingService validates tenant, text and candidate limits, then calls
+the provider under a timeout; validated scores sort passages with stable ties.
+Source references survive the reorder. Only one CPU inference runs per adapter.
+A timed-out thread cannot be killed safely, so later calls fail busy until it ends.
+Missing weights never silently turn reranking into a lexical heuristic.
+Trade-off: extra precision potential costs latency and bounded candidate recall;
+512-token model truncation can omit later passage details.
+Evidence: 9 focused offline cases passed; full Qdrant-enabled suite: 323 passed, 4 skips. Ruff, mypy (102 files), lock and diff passed. A separate real CPU inference passed on two query/passage pairs with cross-encoder/ms-marco-MiniLM-L2-v2 pinned at 1b5cd67b15209f24824c50370e0397743aa9b787; relevant Paris evidence ranked above the banana distractor. This is a smoke test, not a relevance benchmark.
+
+1. How does a cross-encoder differ from embedding similarity and RRF?
+2. Trace canonical evidence through pair scoring and explain retained source ranks.
+3. Why must a timed-out CPU inference retain its ownership slot?
+4. How do candidate count and truncation trade recall for cost?
+5. Give an interview explanation separating real model smoke proof from measured quality.
+
+Learner answers: pending.

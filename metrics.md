@@ -23,12 +23,12 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-04
-Current verified slice: Phase 6, Slice 6.3 — Explainable reciprocal-rank fusion.
+Current verified slice: Phase 6, Slice 6.6 — Canonical evidence and cross-encoder reranking.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 290 passed, 5 skipped | verified | `uv run pytest` |
-| Automated tests | Qdrant-enabled full suite | 292 passed, 3 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest` |
+| Automated tests | Latest offline-only full run (Slice 6.4) | 301 passed, 5 skipped | historical verified | `uv run pytest` |
+| Automated tests | Current Qdrant-enabled full suite | 323 passed, 4 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run --no-sync pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -62,7 +62,7 @@ Current verified slice: Phase 6, Slice 6.3 — Explainable reciprocal-rank fusio
 | Automated tests | Focused reciprocal-rank fusion tests | 14 passed | verified | `uv run pytest apps/worker/tests/test_fusion.py -q` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 95 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 102 source files | verified | `uv run --no-sync mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0008_scope_page_checksum` | verified | PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Chunk-manifest migration | `0009_chunk_manifests` present in source; PostgreSQL application unverified | implemented | `migrations/versions/0009_chunk_manifests.py` |
@@ -394,3 +394,11 @@ Learning remains pending in `learning-checkpoints.md`.
 Canonical evidence has 4-table tenant/lineage checks, current-version enforcement,
 32 MiB parse limit per object and 64 MiB cumulative resolver limit. These are
 configured bounds, not measured throughput or safe transport-memory guarantees.
+
+## Slice 6.6 verification — 2026-09-04
+
+9 focused offline cases passed; full Qdrant-enabled suite: 323 passed, 4 skips. Ruff, mypy (102 files), lock and diff passed. A separate real CPU inference passed on two query/passage pairs with cross-encoder/ms-marco-MiniLM-L2-v2 pinned at 1b5cd67b15209f24824c50370e0397743aa9b787; relevant Paris evidence ranked above the banana distractor. This is a smoke test, not a relevance benchmark.
+Command: `OPENWIKIRAG_TEST_QDRANT_URL=http://localhost:6333 uv run --no-sync pytest -q`.
+Real smoke command is documented in README. The learned pairwise model works;
+the active dense/sparse retrieval encoders remain deterministic hash baselines.
+No production latency, scale, broad relevance improvement or resume readiness claimed.

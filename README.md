@@ -224,3 +224,19 @@ OPENWIKIRAG_TEST_POSTGRES_URL=postgresql+asyncpg://... \
 The integration test applies Alembic migrations, uses a non-superuser role,
 and verifies that membership and audit rows are restricted by transaction-local
 tenant context.
+
+### Optional cross-encoder runtime (Slice 6.6)
+
+Install with `uv sync --extra models --dev`. The base service does not download
+model weights. Provision the pinned model before serving; a missing model is an
+explicit error. Reproduce the opt-in CPU smoke (downloads public model weights):
+
+```sh
+OPENWIKIRAG_TEST_RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L2-v2 \\
+OPENWIKIRAG_TEST_RERANKER_REVISION=1b5cd67b15209f24824c50370e0397743aa9b787 \\
+uv run --extra models pytest apps/worker/tests/test_reranking.py -k real_cross
+```
+
+Scores are model-dependent relevance signals, not calibrated probabilities.
+The [official CrossEncoder interface](https://sbert.net/docs/package_reference/cross_encoder/model.html)
+documents the pairwise scoring, revision and local-files-only settings.
