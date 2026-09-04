@@ -1673,3 +1673,19 @@ Evidence: New two-tenant worker regression failed before the fix (second job dea
 5. Give a concise interview explanation of this discovered integration defect and its regression proof.
 
 Learner answers: pending.
+
+## Slice 7.2 — Neo4j projection and canonical rebuild
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: Use Neo4j6.3 async driver with tenant/id composite uniqueness and artifact/entity/fact nodes; MERGE endpoint links in one bounded transaction, checksum conflicts abort. Parameters never interpolate user Cypher. Read caps1–50 and3s transaction timeout. Explicit tenant confirmation gates bounded projection deletion. Alternative direct unkeyed edges risks duplicates; trade-off: extra fact node hop, canonical verification still needed for stale projections.
+Execution and failures: KnowledgeArtifact -> full schema validation -> managed write (10s timeout, bounded retry) -> artifact checksum compare -> entity/fact MERGE -> endpoint links -> commit. neighbors queries only tenant-scoped seed/fact refs. graph_cli pages50 canonical PostgreSQL rows, verifies payload/checksum/identity, replays. clear deletes at most500 matching application-label nodes per transaction for the confirmed tenant; no PostgreSQL data changes.
+Files: application/graph_projection.py, infrastructure/neo4j.py, graph_cli.py, core/config.py, pyproject/uv.lock, test_graph_projection.py.
+Evidence: 3 focused cases passed including2 real Neo4j5.26 integration cases: idempotence, exact adjacency, bounds, foreign denial, checksum conflict, confirmed clear, identical rebuild. Actual CLI replayed1 PostgreSQL artifact into real Neo4j. Combined PostgreSQL+Qdrant+Neo4j suite347 passed,3 skips; Ruff/mypy118 files/lock/diff passed. D-051 prerequisite resolved repeated-content ingestion defect. Canonical data was never deleted.
+
+1. Why pair MERGE with uniqueness constraints and canonical IDs?
+2. Trace an artifact through its atomic transaction and a one-hop read.
+3. What happens if a retry supplies a different checksum for the same artifact?
+4. Why must graph hits be checked against current canonical evidence later?
+5. Describe the tested rebuild without claiming arbitrary graph scale or production availability.
+
+Learner answers: pending.

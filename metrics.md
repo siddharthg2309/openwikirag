@@ -434,3 +434,9 @@ Learning is pending; no scale, latency, broad relevance or resume-readiness infe
 New two-tenant worker regression failed before the fix (second job dead_letter), then passed. Focused regression plus repeated real PostgreSQL graph-worker integration:2 passed. PostgreSQL0011 migration and alembic check passed; Ruff/mypy118 files/diff passed. Current Neo4j slice remains pending its final regression.
 Evidence files: models.py generation constraint, migrations/versions/0011_generation_checksum_scope.py, test_generation_checksum_scope.py; test_knowledge_postgres.py.
 Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
+
+## Slice 7.2 — Neo4j projection and canonical rebuild (2026-09-04)
+
+3 focused cases passed including2 real Neo4j5.26 integration cases: idempotence, exact adjacency, bounds, foreign denial, checksum conflict, confirmed clear, identical rebuild. Actual CLI replayed1 PostgreSQL artifact into real Neo4j. Combined PostgreSQL+Qdrant+Neo4j suite347 passed,3 skips; Ruff/mypy118 files/lock/diff passed. D-051 prerequisite resolved repeated-content ingestion defect. Canonical data was never deleted.
+Evidence files: application/graph_projection.py, infrastructure/neo4j.py, graph_cli.py, core/config.py, pyproject/uv.lock, test_graph_projection.py.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.

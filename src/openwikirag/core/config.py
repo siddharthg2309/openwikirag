@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
     qdrant_url: str = Field(default="http://127.0.0.1:6333", min_length=1)
     qdrant_api_key: str | None = None
+    neo4j_uri: str = "bolt://127.0.0.1:7687"
+    neo4j_user: str = "neo4j"
+    neo4j_password: str = "openwikirag-dev-password"
+    neo4j_database: str = "neo4j"
     reranker_model: str = Field(default="", max_length=255)
     reranker_revision: str = Field(default="", pattern=r"^(|[0-9a-f]{40})$")
 

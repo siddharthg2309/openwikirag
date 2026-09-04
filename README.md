@@ -282,3 +282,17 @@ artifact before job success. Supported explicit source lines:
 Entity normalization is deterministic; every fact retains its source quotation
 and exact offsets. Arbitrary prose extraction and alias disambiguation are not
 implemented. Documents without these annotations produce an empty graph artifact.
+
+### Neo4j projection and rebuild (Slice 7.2)
+
+Configure `OPENWIKIRAG_NEO4J_URI`, `OPENWIKIRAG_NEO4J_USER`,
+`OPENWIKIRAG_NEO4J_PASSWORD` and `OPENWIKIRAG_NEO4J_DATABASE`.
+`uv run python -m openwikirag.graph_cli --tenant TENANT_UUID` replays canonical
+artifacts from PostgreSQL. To explicitly clear that tenant's derived projection
+first, additionally pass `--clear --confirm-tenant TENANT_UUID` with the same UUID.
+This does not delete source documents or PostgreSQL artifacts. Other tenants'
+application graph nodes are outside the deletion target.
+
+Real integration tests require a disposable Neo4j instance configured through
+`OPENWIKIRAG_TEST_NEO4J_URI` and `OPENWIKIRAG_TEST_NEO4J_PASSWORD`.
+Managed transaction retries follow the [official async driver contract](https://neo4j.com/docs/api/python-driver/current/async_api.html).
