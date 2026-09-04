@@ -22,13 +22,13 @@ they are not evidence of production scale or universal security.
 
 ## Current verified snapshot
 
-Last updated: 2026-09-03
-Current verified slice: Phase 5, Slice 5.9 — Durable worker vector projection.
+Last updated: 2026-09-04
+Current verified slice: Phase 6, Slice 6.1 — Tenant-scoped candidate retrieval contracts.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
-| Automated tests | Local test suite | 253 passed, 5 skipped | verified | `uv run pytest` |
-| Automated tests | Qdrant-enabled full suite | 255 passed, 3 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest` |
+| Automated tests | Local test suite | 272 passed, 5 skipped | verified | `uv run pytest` |
+| Automated tests | Qdrant-enabled full suite | 274 passed, 3 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
 | Automated tests | Focused document-upload tests | 11 passed | verified | `uv run pytest apps/api/tests/test_documents.py` |
 | Automated tests | Focused outbox/publisher tests | 5 passed | verified | `uv run pytest apps/api/tests/test_outbox.py` |
@@ -58,9 +58,10 @@ Current verified slice: Phase 5, Slice 5.9 — Durable worker vector projection.
 | Automated tests | Focused vector-index projection tests | 9 passed | verified | `uv run pytest apps/worker/tests/test_vector_index.py -q` |
 | Automated tests | Focused live Qdrant adapter tests | 7 passed against Qdrant 1.14.1 | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest apps/worker/tests/test_qdrant.py -q` |
 | Automated tests | Focused vector-ingestion and durable-consumer tests | 28 passed against Qdrant 1.14.1 | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run pytest apps/worker/tests/test_vector_ingestion.py apps/api/tests/test_ingestion.py -q` |
+| Automated tests | Focused tenant-scoped retrieval-contract tests | 19 passed | verified | `uv run pytest apps/worker/tests/test_retrieval.py -q` |
 | Integration | Redis Streams adapter and consumer groups | 2 real integration tests passed against Redis 7 | verified | `OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest apps/api/tests/test_redis_integration.py` |
 | Static quality | Ruff lint | 0 reported issues | verified | `uv run ruff check .` |
-| Static quality | Mypy | 0 issues across 91 source files | verified | `uv run mypy` |
+| Static quality | Mypy | 0 issues across 93 source files | verified | `uv run mypy` |
 | Database | PostgreSQL integration engine | PostgreSQL 16 | verified | Fresh test instance and migration run |
 | Database | Alembic schema head | `0008_scope_page_checksum` | verified | PostgreSQL 16 `uv run alembic upgrade head` |
 | Database | Chunk-manifest migration | `0009_chunk_manifests` present in source; PostgreSQL application unverified | implemented | `migrations/versions/0009_chunk_manifests.py` |
@@ -119,6 +120,7 @@ Current verified slice: Phase 5, Slice 5.9 — Durable worker vector projection.
 | Vector indexing | Live Qdrant projection schema | 1 pinned client (`qdrant-client` 1.14.3), 1 named dense cosine vector, 1 named sparse vector, 10 typed payload indexes, and deterministic UUID point ids | verified | `QdrantVectorIndex`, Qdrant 1.14.1 integration, and 7 focused real-service tests |
 | Vector indexing | Live Qdrant tenant-safe point lifecycle | Create/reuse/immutable-conflict behavior, validated vector/payload round-trip, and 1 foreign-tenant negative read path | verified | Qdrant-enabled full suite: 255 passed, 3 skipped |
 | Vector indexing | Durable worker projection | 1 immutable chunk manifest plus 1 Qdrant point per parent/child chunk; bounded dense/sparse batches; replay reports created/reused counts and completes before job success/Redis ack | verified | 7 focused service tests, 21 consumer tests, and 255 Qdrant-enabled full-suite tests |
+| Retrieval | Provider-neutral candidate boundary | 3 retrieval modes, 6 optional filter dimensions capped at 50 values each, 100-candidate maximum per leg, 4,096-character normalized-query maximum, and 2 independent ranked lists | verified | 19 focused tests and 274 Qdrant-enabled full-suite tests; live Qdrant search and quality remain unverified |
 | WikiRAG | Page generation status | `draft` skeleton; artifact metadata transitions through `needs_review`/`approved`; content remains immutable | verified | Page-builder, persistence, review service, and API tests; no real LLM is configured |
 | Extraction | OCR fallback contract | 2 replaceable ports, 2 native CLI adapters, 1 bounded sequential orchestrator | verified | `apps/worker/tests/test_ocr.py`; native runtime is not claimed active |
 | Extraction | OCR request bounds | 50 pages maximum and 30 seconds per page by default | implemented | `OcrOptions`; no production workload benchmark yet |

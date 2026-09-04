@@ -159,6 +159,16 @@ written before a failure. The current deterministic hash providers prove
 orchestration and replay behavior, not semantic embedding quality; search,
 fusion, reranking, and projection-performance claims remain deferred.
 
+Phase 6.1 defines the retrieval-side application boundary without coupling it
+to Qdrant. A trusted tenant id, normalized and bounded query, bounded optional
+filters, mode, and candidate limit produce independently ranked dense and
+sparse lists with complete provenance and representation identity. The local
+adapter proves mandatory tenant isolation, deterministic cosine-equivalent and
+sparse-dot scoring, stable tie-breaking, and fail-closed output validation.
+Hybrid mode does not fuse scores yet; live Qdrant querying, canonical text
+resolution, fusion, reranking, HTTP authorization, and retrieval-quality
+measurements remain later slices.
+
 The OCR boundary is implemented behind replaceable page-renderer and engine
 ports, with optional Poppler/Tesseract process adapters. Native OCR is disabled
 by default; enable it with `OPENWIKIRAG_OCR_ENABLED=true` after installing the
