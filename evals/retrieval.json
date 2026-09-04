@@ -1,0 +1,25 @@
+{
+  "name": "authored-engineering-regression-v1",
+  "documents": {
+    "rotation": "JWT refresh tokens rotate after authentication. Reusing a revoked refresh token fails verification.",
+    "tenant": "Every query requires a tenant identifier. Foreign tenant documents are excluded even when their wording matches.",
+    "outbox": "A transactional outbox commits the job and event in PostgreSQL together. The publisher retries Redis delivery after a failure.",
+    "ack": "The worker acknowledges the Redis message only after committing job success. A crash before acknowledgement causes safe replay.",
+    "rrf": "Reciprocal rank fusion combines dense and sparse ordering using reciprocal ranks, not incomparable raw similarity scores.",
+    "code": "Error E429 indicates a rate limit. Retry E429 with bounded exponential backoff and jitter.",
+    "object": "Raw document bytes live in object storage. PostgreSQL stores immutable version metadata and checksums.",
+    "graph": "Aurora calls Borealis. Borealis depends on Cygnus. Relationship traversal discovers multi-hop dependencies.",
+    "fruit": "Bananas grow in tropical climates. Apples and oranges are popular fruits.",
+    "capital": "Paris is the capital of France. Berlin is the capital of Germany."
+  },
+  "queries": [
+    {"id": "q1", "text": "What happens when a refresh token is reused?", "grades": {"rotation": 3}},
+    {"id": "q2", "text": "How are foreign tenant documents excluded?", "grades": {"tenant": 3}},
+    {"id": "q3", "text": "What protects delivery after a database commit and Redis outage?", "grades": {"outbox": 3, "ack": 1}},
+    {"id": "q4", "text": "When does the worker acknowledge the message?", "grades": {"ack": 3, "outbox": 1}},
+    {"id": "q5", "text": "Why not add dense and sparse similarity scores?", "grades": {"rrf": 3}},
+    {"id": "q6", "text": "E429", "grades": {"code": 3}},
+    {"id": "q7", "text": "Where are the original document bytes kept?", "grades": {"object": 3}},
+    {"id": "q8", "text": "Which city is France's capital?", "grades": {"capital": 3}}
+  ]
+}

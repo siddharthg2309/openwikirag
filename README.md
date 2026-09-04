@@ -254,3 +254,14 @@ To enable the separately provisioned cross-encoder, set
 `OPENWIKIRAG_RERANKER_MODEL` and `OPENWIKIRAG_RERANKER_REVISION` to the pinned
 model/revision documented above. Missing weights produce 503, not a fallback.
 The default retrieval embeddings remain deterministic hash baselines.
+
+### Retrieval quality regression (Slice 6.8)
+
+Run `uv run --no-sync python -m openwikirag.evaluation_cli` for dense/sparse/hybrid.
+Add `--model cross-encoder/ms-marco-MiniLM-L2-v2 --revision 1b5cd67b15209f24824c50370e0397743aa9b787`
+with the models extra and locally provisioned weights for real pairwise reranking.
+Corpus/qrels: `evals/retrieval.json`; measured output:
+`evals/retrieval-results-2026-09-04.json`. Eight authored queries/ten documents,
+k=3, candidate window=10. This is not a held-out benchmark or production workload.
+Sparse outperformed hybrid on this fixture; the hash-based dense model is not a
+semantic encoder. Model replacement must be evaluated against this baseline.

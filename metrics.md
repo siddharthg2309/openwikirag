@@ -416,3 +416,9 @@ compatibility probe. A dependency-level test verifies this flag, no schema calls
 and client cleanup. Worker provisioning retains its compatibility behavior.
 Final proof: 11 focused cases; 334 passed/4 skipped in the Qdrant-enabled suite;
 Ruff, mypy (106 files), diff checks passed. This supersedes the earlier 333 count.
+
+## Slice 6.8 — Reproducible retrieval ablation (2026-09-04)
+
+3 focused tests; 337 passing/4 skipped Qdrant-enabled full suite; Ruff/mypy (109 files)/diff passed. Actual authored corpus:10 documents/8 queries,k=3,window=10. Dense Recall/MRR/nDCG=0.375/0.3125/0.328866; sparse=1.0/1.0/0.997855; hybrid=0.875/0.8125/0.826721; real pinned reranker=0.9375/1.0/0.989665. Sparse outperformed hybrid and reranked recall/nDCG on this fixture. Default dense remains hash-based, not semantic. Reproduce via README CLI.
+Evidence files: application/evaluation.py, evaluation_cli.py, evals/retrieval.json, evals/retrieval-results-2026-09-04.json, test_evaluation.py.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.

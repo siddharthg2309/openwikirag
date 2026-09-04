@@ -1625,3 +1625,19 @@ compatibility probe. A dependency-level test verifies this flag, no schema calls
 and client cleanup. Worker provisioning retains its compatibility behavior.
 Final proof: 11 focused cases; 334 passed/4 skipped in the Qdrant-enabled suite;
 Ruff, mypy (106 files), diff checks passed. This supersedes the earlier 333 count.
+
+## Slice 6.8 — Reproducible retrieval ablation
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: Measure three production baseline modes and optional real cross-encoder against authored qrels, with fixed candidate window/cutoff and dataset checksum. Reject invalid labels/ranking duplicates. Alternatives rejected: invented uplift or heuristic pretending to be reranking. Trade-off: this tiny development fixture cannot establish generalization or production performance.
+Execution and failures: evaluation_cli -> validate EvaluationDataset -> normalize/chunk ten passages -> hash dense/sparse embeddings -> in-memory candidate adapter -> per-query dense/sparse/hybrid RRF -> optional pinned CPU pair scoring -> per-query Recall@3/MRR@3/nDCG@3 -> macro averages and JSON. No service mutations; malformed corpus, missing model or invalid scores fail explicitly.
+Files: application/evaluation.py, evaluation_cli.py, evals/retrieval.json, evals/retrieval-results-2026-09-04.json, test_evaluation.py.
+Evidence: 3 focused tests; 337 passing/4 skipped Qdrant-enabled full suite; Ruff/mypy (109 files)/diff passed. Actual authored corpus:10 documents/8 queries,k=3,window=10. Dense Recall/MRR/nDCG=0.375/0.3125/0.328866; sparse=1.0/1.0/0.997855; hybrid=0.875/0.8125/0.826721; real pinned reranker=0.9375/1.0/0.989665. Sparse outperformed hybrid and reranked recall/nDCG on this fixture. Default dense remains hash-based, not semantic. Reproduce via README CLI.
+
+1. What do Recall@k, MRR and nDCG each measure?
+2. Trace corpus text through each ablation and explain why the candidate window is fixed.
+3. Why are duplicate rankings or missing qrel documents invalid?
+4. What does sparse beating hybrid tell us about adding a weak dense signal?
+5. How would you explain these numbers without implying held-out enterprise accuracy?
+
+Learner answers: pending.

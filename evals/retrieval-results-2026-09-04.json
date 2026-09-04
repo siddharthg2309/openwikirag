@@ -1,0 +1,415 @@
+{
+  "dataset": "authored-engineering-regression-v1",
+  "dataset_sha256": "38c20af52d5d98ee8979124f8e3792604e17fc31041910e7f02e754f91bad9a9",
+  "documents": 10,
+  "queries": 8,
+  "k": 3,
+  "candidate_window": 10,
+  "dense_model": "hashing-model-v1",
+  "sparse_model": "lexical-hash-v1",
+  "reranker": "sentence-transformers:cross-encoder/ms-marco-MiniLM-L2-v2@1b5cd67b15209f24824c50370e0397743aa9b787:cpu:max_length=512",
+  "scope": "Authored development regression fixture; not held-out enterprise quality.",
+  "aggregate": {
+    "dense": {
+      "recall": 0.375,
+      "mrr": 0.3125,
+      "ndcg": 0.3288662191964322
+    },
+    "sparse": {
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 0.9978552784883424
+    },
+    "hybrid": {
+      "recall": 0.875,
+      "mrr": 0.8125,
+      "ndcg": 0.8267214976847747
+    },
+    "reranked": {
+      "recall": 0.9375,
+      "mrr": 1,
+      "ndcg": 0.9896649265891196
+    }
+  },
+  "per_query": [
+    {
+      "query_id": "q1",
+      "mode": "dense",
+      "ranking": [
+        "capital",
+        "ack",
+        "rrf"
+      ],
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
+    },
+    {
+      "query_id": "q1",
+      "mode": "sparse",
+      "ranking": [
+        "rotation",
+        "tenant",
+        "capital"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q1",
+      "mode": "hybrid",
+      "ranking": [
+        "capital",
+        "ack",
+        "outbox"
+      ],
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
+    },
+    {
+      "query_id": "q1",
+      "mode": "reranked",
+      "ranking": [
+        "rotation",
+        "outbox",
+        "ack"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q2",
+      "mode": "dense",
+      "ranking": [
+        "fruit",
+        "object",
+        "code"
+      ],
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
+    },
+    {
+      "query_id": "q2",
+      "mode": "sparse",
+      "ranking": [
+        "tenant",
+        "fruit"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q2",
+      "mode": "hybrid",
+      "ranking": [
+        "fruit",
+        "tenant",
+        "object"
+      ],
+      "recall": 1,
+      "mrr": 0.5,
+      "ndcg": 0.6309297535714575
+    },
+    {
+      "query_id": "q2",
+      "mode": "reranked",
+      "ranking": [
+        "tenant",
+        "graph",
+        "code"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q3",
+      "mode": "dense",
+      "ranking": [
+        "graph",
+        "rotation",
+        "fruit"
+      ],
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
+    },
+    {
+      "query_id": "q3",
+      "mode": "sparse",
+      "ranking": [
+        "outbox",
+        "ack",
+        "rotation"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q3",
+      "mode": "hybrid",
+      "ranking": [
+        "outbox",
+        "rotation",
+        "ack"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 0.9828422279067397
+    },
+    {
+      "query_id": "q3",
+      "mode": "reranked",
+      "ranking": [
+        "outbox",
+        "ack",
+        "rotation"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q4",
+      "mode": "dense",
+      "ranking": [
+        "ack",
+        "outbox",
+        "rrf"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q4",
+      "mode": "sparse",
+      "ranking": [
+        "ack",
+        "capital",
+        "outbox"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 0.9828422279067397
+    },
+    {
+      "query_id": "q4",
+      "mode": "hybrid",
+      "ranking": [
+        "ack",
+        "outbox",
+        "tenant"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q4",
+      "mode": "reranked",
+      "ranking": [
+        "ack",
+        "fruit",
+        "tenant"
+      ],
+      "recall": 0.5,
+      "mrr": 1,
+      "ndcg": 0.9173194127129571
+    },
+    {
+      "query_id": "q5",
+      "mode": "dense",
+      "ranking": [
+        "object",
+        "rrf",
+        "ack"
+      ],
+      "recall": 1,
+      "mrr": 0.5,
+      "ndcg": 0.6309297535714575
+    },
+    {
+      "query_id": "q5",
+      "mode": "sparse",
+      "ranking": [
+        "rrf",
+        "object",
+        "outbox"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q5",
+      "mode": "hybrid",
+      "ranking": [
+        "rrf",
+        "object",
+        "outbox"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q5",
+      "mode": "reranked",
+      "ranking": [
+        "rrf",
+        "tenant",
+        "rotation"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q6",
+      "mode": "dense",
+      "ranking": [
+        "fruit",
+        "rrf",
+        "rotation"
+      ],
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
+    },
+    {
+      "query_id": "q6",
+      "mode": "sparse",
+      "ranking": [
+        "code"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q6",
+      "mode": "hybrid",
+      "ranking": [
+        "code",
+        "fruit",
+        "rrf"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q6",
+      "mode": "reranked",
+      "ranking": [
+        "code",
+        "rotation",
+        "rrf"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q7",
+      "mode": "dense",
+      "ranking": [
+        "object",
+        "outbox",
+        "ack"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q7",
+      "mode": "sparse",
+      "ranking": [
+        "object",
+        "capital",
+        "outbox"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q7",
+      "mode": "hybrid",
+      "ranking": [
+        "object",
+        "outbox",
+        "capital"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q7",
+      "mode": "reranked",
+      "ranking": [
+        "object",
+        "tenant",
+        "fruit"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q8",
+      "mode": "dense",
+      "ranking": [
+        "code",
+        "rrf",
+        "ack"
+      ],
+      "recall": 0,
+      "mrr": 0,
+      "ndcg": 0
+    },
+    {
+      "query_id": "q8",
+      "mode": "sparse",
+      "ranking": [
+        "capital"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q8",
+      "mode": "hybrid",
+      "ranking": [
+        "capital",
+        "code",
+        "rrf"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    },
+    {
+      "query_id": "q8",
+      "mode": "reranked",
+      "ranking": [
+        "capital",
+        "rotation",
+        "graph"
+      ],
+      "recall": 1,
+      "mrr": 1,
+      "ndcg": 1
+    }
+  ]
+}
