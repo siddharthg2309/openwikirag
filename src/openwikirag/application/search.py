@@ -11,12 +11,16 @@ from openwikirag.application.evidence import (
     ResolvedEvidence,
 )
 from openwikirag.application.fusion import ReciprocalRankFusionService, RrfFusionConfig
+from openwikirag.application.graph_projection import GraphProjectionError
+from openwikirag.application.graph_retrieval import GraphExpansion, GraphExpansionService
 from openwikirag.application.reranking import RerankingProviderError, RerankingService
 from openwikirag.application.retrieval import (
     CandidateRetrievalService,
     RetrievalInputError,
+    SearchFilters,
     SearchRequest,
 )
+from openwikirag.application.source_evidence import SourceEvidence
 from openwikirag.security.authorization import AuthorizationService, Permission, Principal
 
 
@@ -36,6 +40,8 @@ class SearchResult(BaseModel):
     duplicate_count: int
     unavailable_count: int
     reranker_identity: str | None = None
+    evidence: tuple[SourceEvidence, ...] = ()
+    graph: GraphExpansion | None = None
 
 
 class SearchService:
@@ -44,10 +50,12 @@ class SearchService:
         retrieval: CandidateRetrievalService,
         resolver: CanonicalEvidenceResolver,
         reranker: RerankingService | None = None,
+        graph: GraphExpansionService | None = None,
     ) -> None:
         self.retrieval = retrieval
         self.resolver = resolver
         self.reranker = reranker
+        self.graph = graph
 
     async def search(
         self,
@@ -56,6 +64,7 @@ class SearchService:
         request: SearchRequest,
         limit: int = 10,
         rerank: bool = False,
+        graph_hops: int = 0,
     ) -> SearchResult:
         AuthorizationService().require(
             principal,
@@ -69,6 +78,14 @@ class SearchService:
             raise RetrievalInputError("Invalid search result controls.")
         if rerank and self.reranker is None:
             raise RerankingProviderError("No reranker is configured.")
+        if type(graph_hops) is not int or graph_hops not in (0, 1, 2):
+            raise RetrievalInputError("Invalid graph hop limit.")
+        if graph_hops and self.graph is None:
+            raise GraphProjectionError("Graph expansion is not configured.")
+        if graph_hops and request.filters != SearchFilters():
+            raise RetrievalInputError(
+                "Graph expansion currently requires an unfiltered tenant search."
+            )
         candidates = await self.retrieval.retrieve(request)
         fused = ReciprocalRankFusionService(RrfFusionConfig(fused_limit=100)).fuse(candidates)
         grouped = deduplicate_evidence(fused)
@@ -111,6 +128,14 @@ class SearchService:
                 SearchHit(rank=index, evidence=evidence, explanation=group)
                 for index, (evidence, group) in enumerate(resolved, 1)
             )
+        sources = tuple(SourceEvidence.from_retrieval(hit.evidence) for hit in hits)
+        expansion = None
+        if graph_hops and self.graph is not None:
+            expansion = await self.graph.expand(principal=principal, seeds=sources, hops=graph_hops)
+            merged = {item.identity: item for item in sources}
+            for item in expansion.evidence:
+                merged.setdefault(item.evidence.identity, item.evidence)
+            sources = tuple(merged.values())
         return SearchResult(
             query_checksum=request.query_checksum_sha256,
             hits=hits,
@@ -118,4 +143,6 @@ class SearchService:
             duplicate_count=grouped.duplicate_count,
             unavailable_count=unavailable,
             reranker_identity=identity,
+            evidence=sources,
+            graph=expansion,
         )

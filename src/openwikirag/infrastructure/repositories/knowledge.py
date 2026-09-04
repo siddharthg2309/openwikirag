@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from ..models import (
     ChunkManifestArtifact,
     Document,
     DocumentVersion,
+    IngestionJob,
     KnowledgeArtifactRow,
     NormalizedDocumentArtifact,
 )
@@ -25,30 +26,38 @@ class KnowledgeRepository:
         *,
         tenant_id: UUID,
         manifest_id: UUID,
+        current_ready: bool = False,
     ) -> tuple[ChunkManifestArtifact, DocumentVersion] | None:
-        row = (
-            await self.session.execute(
-                select(ChunkManifestArtifact, DocumentVersion)
-                .join(
-                    DocumentVersion, DocumentVersion.id == ChunkManifestArtifact.document_version_id
-                )
-                .join(Document, Document.id == DocumentVersion.document_id)
-                .join(
-                    NormalizedDocumentArtifact,
-                    NormalizedDocumentArtifact.id == ChunkManifestArtifact.normalized_artifact_id,
-                )
-                .where(
-                    ChunkManifestArtifact.id == manifest_id,
-                    ChunkManifestArtifact.tenant_id == tenant_id,
-                    DocumentVersion.tenant_id == tenant_id,
-                    Document.tenant_id == tenant_id,
-                    NormalizedDocumentArtifact.tenant_id == tenant_id,
-                    NormalizedDocumentArtifact.document_version_id == DocumentVersion.id,
-                    NormalizedDocumentArtifact.content_checksum_sha256
-                    == ChunkManifestArtifact.source_artifact_checksum,
-                )
+        query = (
+            select(ChunkManifestArtifact, DocumentVersion)
+            .join(DocumentVersion, DocumentVersion.id == ChunkManifestArtifact.document_version_id)
+            .join(Document, Document.id == DocumentVersion.document_id)
+            .join(
+                NormalizedDocumentArtifact,
+                NormalizedDocumentArtifact.id == ChunkManifestArtifact.normalized_artifact_id,
             )
-        ).first()
+            .where(
+                ChunkManifestArtifact.id == manifest_id,
+                ChunkManifestArtifact.tenant_id == tenant_id,
+                DocumentVersion.tenant_id == tenant_id,
+                Document.tenant_id == tenant_id,
+                NormalizedDocumentArtifact.tenant_id == tenant_id,
+                NormalizedDocumentArtifact.document_version_id == DocumentVersion.id,
+                NormalizedDocumentArtifact.content_checksum_sha256
+                == ChunkManifestArtifact.source_artifact_checksum,
+            )
+        )
+        if current_ready:
+            query = query.where(
+                Document.current_version_id == DocumentVersion.id,
+                exists().where(
+                    IngestionJob.tenant_id == tenant_id,
+                    IngestionJob.document_version_id == DocumentVersion.id,
+                    IngestionJob.job_type == "ingestion",
+                    IngestionJob.status == "succeeded",
+                ),
+            )
+        row = (await self.session.execute(query)).first()
         return (row[0], row[1]) if row else None
 
     async def get(self, *, tenant_id: UUID, artifact_id: UUID) -> KnowledgeArtifactRow | None:

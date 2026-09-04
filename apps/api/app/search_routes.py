@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from openwikirag.application.deduplication import EvidenceDeduplicationError
 from openwikirag.application.evidence import EvidenceError
 from openwikirag.application.fusion import FusionError
+from openwikirag.application.graph_projection import GraphProjectionError
 from openwikirag.application.reranking import RerankingError
 from openwikirag.application.retrieval import (
     RetrievalError,
@@ -35,6 +36,7 @@ class SearchBody(BaseModel):
     candidate_limit: int = Field(default=20, ge=1, le=100, strict=True)
     limit: int = Field(default=10, ge=1, le=40, strict=True)
     rerank: bool = Field(default=False, strict=True)
+    graph_hops: int = Field(default=0, ge=0, le=2, strict=True)
     document_ids: tuple[UUID, ...] = Field(default=(), max_length=50)
     document_version_ids: tuple[UUID, ...] = Field(default=(), max_length=50)
     source_types: tuple[str, ...] = Field(default=(), max_length=50)
@@ -56,6 +58,7 @@ class SearchBody(BaseModel):
                         "candidate_limit",
                         "limit",
                         "rerank",
+                        "graph_hops",
                     }
                 )
             ),
@@ -76,6 +79,7 @@ async def search(
             request=body.to_request(UUID(principal.tenant_id)),
             limit=body.limit,
             rerank=body.rerank,
+            graph_hops=body.graph_hops,
         )
         await AuditRepository(session).record(
             action="search.read",
@@ -98,6 +102,7 @@ async def search(
         FusionError,
         EvidenceDeduplicationError,
         RerankingError,
+        GraphProjectionError,
         SQLAlchemyError,
     ) as exc:
         await session.rollback()

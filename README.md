@@ -296,3 +296,15 @@ application graph nodes are outside the deletion target.
 Real integration tests require a disposable Neo4j instance configured through
 `OPENWIKIRAG_TEST_NEO4J_URI` and `OPENWIKIRAG_TEST_NEO4J_PASSWORD`.
 Managed transaction retries follow the [official async driver contract](https://neo4j.com/docs/api/python-driver/current/async_api.html).
+
+### Graph-aware search (Slice 7.3)
+
+Set `OPENWIKIRAG_GRAPH_ENABLED=true` in API and worker configuration after
+provisioning Neo4j. The worker projects canonical graph artifacts before success;
+search accepts `graph_hops: 1` or `2`. Responses preserve ordinary `hits`, expose
+`graph` evidence explanations, and merge unique canonical passages in `evidence`.
+Graph expansion currently requires no optional document/language/etc. filters;
+unsupported combinations are rejected, not silently widened. Disabled graph
+configuration rejects explicit graph requests. Bounds:10seeds,20visited nodes,
+10neighbors/node,20graph passages,10s deadline. Current-version and succeeded-job
+checks precede each graph source read; stale paths do not extend the frontier.

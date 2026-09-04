@@ -1689,3 +1689,19 @@ Evidence: 3 focused cases passed including2 real Neo4j5.26 integration cases: id
 5. Describe the tested rebuild without claiming arbitrary graph scale or production availability.
 
 Learner answers: pending.
+
+## Slice 7.3 — Bounded canonical graph-aware retrieval
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: Expand only entities mentioned in canonically verified seed passages. Bounded BFS:1–2hops,10seeds,20visited nodes,10neighbors/node,20unique graph passages,10s overall timeout; seed matching caps32,000 characters. Validate canonical fact/endpoints/current source/quote before extending a branch. Text-first source identity merge preserves unique passages. Optional graph_enabled wires worker/API; requests combining graph with optional filters are explicitly rejected until filter semantics are implemented, never widened.
+Execution and failures: Search -> canonical text hits -> SourceEvidence contract -> verify current/succeeded source -> seed entities from same-manifest canonical artifacts -> tenant-only Neo4j adjacency -> validate graph artifact/checksum/endpoints -> source metadata/object/chunk/quote -> next BFS frontier -> deduped combined evidence. Stale branches stop; foreign/disconnected/corrupt refs fail closed. Worker stages graph artifact and optional projection before consumer commit/ack; projection outage rolls back graph row and remains retryable.
+Files: source_evidence.py, graph_retrieval.py, search.py, repositories/knowledge.py, API search dependency/route, worker wiring/config, test_graph_retrieval.py and source fixture helper.
+Evidence: 6 focused cases passed including live Neo4j across3 linked documents. One-hop versus two-hop distinction and connected passages missing initial text/dense-only result proven; stale intermediate cannot extend frontier; foreign/corrupt rejection, filter/hop controls and retryable graph outage/no ack proven. PostgreSQL+Qdrant+Neo4j full suite353 passed,3 skips; Ruff/mypy121 files/diff passed. General NLP extraction/graph ranking quality/scale remain unverified.
+
+1. How does BFS branching grow, and which six bounds constrain this implementation?
+2. Trace a projected edge through canonical artifact, current manifest and exact quote verification.
+3. Why must a stale intermediate fact stop traversal rather than merely disappear from the answer?
+4. Why reject graph plus filters until their semantics are implemented?
+5. Explain the three-document proof and distinguish it from broad semantic-retrieval quality.
+
+Learner answers: pending.

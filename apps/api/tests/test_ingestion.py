@@ -327,10 +327,13 @@ async def create_job_with_source(
     *,
     source_type: str,
     data: bytes,
+    tenant_id: UUID | None = None,
 ) -> tuple[Tenant, IngestionJob]:
-    tenant = Tenant(name=f"Artifact Ingestion Tenant {uuid4().hex}")
-    session.add(tenant)
-    await session.flush()
+    tenant = await session.get(Tenant, tenant_id) if tenant_id else None
+    if tenant is None:
+        tenant = Tenant(name=f"Artifact Ingestion Tenant {uuid4().hex}")
+        session.add(tenant)
+        await session.flush()
     document = Document(tenant_id=tenant.id, title="Artifact Source", source_type=source_type)
     session.add(document)
     await session.flush()

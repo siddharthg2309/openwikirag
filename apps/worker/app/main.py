@@ -32,6 +32,7 @@ from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import Settings, get_settings
 from openwikirag.core.logging import configure_logging
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
+from openwikirag.infrastructure.neo4j import Neo4jProjection
 from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
 from openwikirag.infrastructure.storage import LocalObjectStorage
 from openwikirag.infrastructure.streams import RedisStreamPublisher
@@ -75,12 +76,15 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
     storage = LocalObjectStorage(Path(settings.object_store_root))
     extractors = build_extractor_registry(settings)
     vector_config = VectorIngestionConfig()
+    graph = Neo4jProjection.from_settings(settings) if settings.graph_enabled else None
     vector_index = QdrantVectorIndex.from_settings(
         settings,
         config=QdrantCollectionConfig(vector=vector_config.collection),
     )
     try:
         await vector_index.ensure_schema()
+        if graph:
+            await graph.ensure_schema()
         async with session_factory() as session:
             outbox = OutboxPublisherService(
                 session,
@@ -95,6 +99,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 vector_config=vector_config,
                 provider=DeterministicWikiProvider(),
                 extractors=extractors,
+                graph=graph,
             )
             regeneration_pipeline = WikiIngestionHandler(
                 session,
@@ -104,6 +109,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 vector_config=vector_config,
                 provider=DeterministicWikiProvider(),
                 extractors=extractors,
+                graph=graph,
             )
             ingestion = IngestionConsumerService(
                 session,
@@ -145,7 +151,11 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 await worker.run(stop_event or asyncio.Event())
     finally:
         try:
-            await vector_index.close()
+            try:
+                if graph:
+                    await graph.close()
+            finally:
+                await vector_index.close()
         finally:
             await transport.close()
             await engine.dispose()

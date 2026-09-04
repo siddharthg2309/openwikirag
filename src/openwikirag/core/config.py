@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     neo4j_user: str = "neo4j"
     neo4j_password: str = "openwikirag-dev-password"
     neo4j_database: str = "neo4j"
+    graph_enabled: bool = False
     reranker_model: str = Field(default="", max_length=255)
     reranker_revision: str = Field(default="", pattern=r"^(|[0-9a-f]{40})$")
 

@@ -440,3 +440,9 @@ Learning is pending; no scale, latency, broad relevance or resume-readiness infe
 3 focused cases passed including2 real Neo4j5.26 integration cases: idempotence, exact adjacency, bounds, foreign denial, checksum conflict, confirmed clear, identical rebuild. Actual CLI replayed1 PostgreSQL artifact into real Neo4j. Combined PostgreSQL+Qdrant+Neo4j suite347 passed,3 skips; Ruff/mypy118 files/lock/diff passed. D-051 prerequisite resolved repeated-content ingestion defect. Canonical data was never deleted.
 Evidence files: application/graph_projection.py, infrastructure/neo4j.py, graph_cli.py, core/config.py, pyproject/uv.lock, test_graph_projection.py.
 Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
+
+## Slice 7.3 — Bounded canonical graph-aware retrieval (2026-09-04)
+
+6 focused cases passed including live Neo4j across3 linked documents. One-hop versus two-hop distinction and connected passages missing initial text/dense-only result proven; stale intermediate cannot extend frontier; foreign/corrupt rejection, filter/hop controls and retryable graph outage/no ack proven. PostgreSQL+Qdrant+Neo4j full suite353 passed,3 skips; Ruff/mypy121 files/diff passed. General NLP extraction/graph ranking quality/scale remain unverified.
+Evidence files: source_evidence.py, graph_retrieval.py, search.py, repositories/knowledge.py, API search dependency/route, worker wiring/config, test_graph_retrieval.py and source fixture helper.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.

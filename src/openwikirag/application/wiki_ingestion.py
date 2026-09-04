@@ -7,6 +7,7 @@ from openwikirag.application.extraction import (
     ExtractionError,
     ExtractorRegistry,
 )
+from openwikirag.application.graph_projection import GraphProjection, GraphProjectionError
 from openwikirag.application.ingestion import PermanentJobError, RetryableJobError
 from openwikirag.application.knowledge import KnowledgeArtifactService, KnowledgeError
 from openwikirag.application.metadata import DeterministicMetadataExtractor, MetadataExtractionError
@@ -63,9 +64,11 @@ class WikiIngestionHandler:
         vector_config: VectorIngestionConfig | None = None,
         provider: WikiGenerationProvider | None = None,
         extractors: ExtractorRegistry = DEFAULT_EXTRACTOR_REGISTRY,
+        graph: GraphProjection | None = None,
     ) -> None:
         self._session = session
         self._storage = storage
+        self._graph = graph
         self._config_hash = config_hash
         self._normalized = NormalizedArtifactService(
             session,
@@ -185,10 +188,12 @@ class WikiIngestionHandler:
         await self._session.refresh(job)
         job.current_step = "knowledge_artifact"
         try:
-            await KnowledgeArtifactService(self._session, self._storage).build(
+            artifact = await KnowledgeArtifactService(self._session, self._storage).build(
                 tenant_id=job.tenant_id, manifest_id=projection.manifest_artifact_id,
             )
-        except KnowledgeError as exc:
+            if self._graph is not None:
+                await self._graph.upsert(artifact)
+        except (KnowledgeError, GraphProjectionError) as exc:
             await self._session.rollback()
             raise RetryableJobError("Canonical graph construction will be retried.") from exc
 
