@@ -402,3 +402,17 @@ Command: `OPENWIKIRAG_TEST_QDRANT_URL=http://localhost:6333 uv run --no-sync pyt
 Real smoke command is documented in README. The learned pairwise model works;
 the active dense/sparse retrieval encoders remain deterministic hash baselines.
 No production latency, scale, broad relevance improvement or resume readiness claimed.
+
+## Slice 6.7 — Authenticated canonical search (2026-09-04)
+
+10 focused API/component tests passed; Qdrant-enabled full suite: 333 passed, 4 external/model skips. Ruff, mypy (106 files), diff passed. API source reads exercised SQLite/local objects/in-memory ranked candidates; live Qdrant legs covered by the existing full-suite integrations. New PostgreSQL source reads are not yet claimed.
+Evidence files: application/search.py, evidence.py, repositories/chunk_artifacts.py; API search_routes.py/search_dependencies.py; core/config.py; apps/api/tests/test_search.py.
+Learning is pending; no scale, latency, broad relevance or resume-readiness inferred.
+
+### Slice 6.7 final dependency review evidence
+
+The request-owned Qdrant client now disables the SDK's synchronous constructor
+compatibility probe. A dependency-level test verifies this flag, no schema calls,
+and client cleanup. Worker provisioning retains its compatibility behavior.
+Final proof: 11 focused cases; 334 passed/4 skipped in the Qdrant-enabled suite;
+Ruff, mypy (106 files), diff checks passed. This supersedes the earlier 333 count.

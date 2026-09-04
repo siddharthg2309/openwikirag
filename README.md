@@ -240,3 +240,17 @@ uv run --extra models pytest apps/worker/tests/test_reranking.py -k real_cross
 Scores are model-dependent relevance signals, not calibrated probabilities.
 The [official CrossEncoder interface](https://sbert.net/docs/package_reference/cross_encoder/model.html)
 documents the pairwise scoring, revision and local-files-only settings.
+
+### Authenticated search (Slice 6.7)
+
+`POST /api/v1/search` accepts `query`, `mode` (dense/sparse/hybrid),
+`candidate_limit` (1–100), `limit` (1–40), `rerank` and optional document,
+version, source type, language, chunk kind and pipeline filters. Tenant comes
+only from the authenticated membership. Responses contain canonical chunk text,
+immutable references and RRF contributions, with optional pairwise scores.
+Only current versions with a succeeded ingestion job are eligible.
+
+To enable the separately provisioned cross-encoder, set
+`OPENWIKIRAG_RERANKER_MODEL` and `OPENWIKIRAG_RERANKER_REVISION` to the pinned
+model/revision documented above. Missing weights produce 503, not a fallback.
+The default retrieval embeddings remain deterministic hash baselines.

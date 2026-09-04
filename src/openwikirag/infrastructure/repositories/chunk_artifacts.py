@@ -2,10 +2,16 @@
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import ChunkManifestArtifact, Document, DocumentVersion, NormalizedDocumentArtifact
+from ..models import (
+    ChunkManifestArtifact,
+    Document,
+    DocumentVersion,
+    IngestionJob,
+    NormalizedDocumentArtifact,
+)
 
 
 class ChunkManifestArtifactRepository:
@@ -24,6 +30,7 @@ class ChunkManifestArtifactRepository:
         source_type: str,
         pipeline_version: str,
         current_only: bool = True,
+        require_ready: bool = False,
         limit: int = 9,
     ) -> tuple[ChunkManifestArtifact, ...]:
         """Resolve projection lineage through all canonical tenant-owned parents."""
@@ -51,6 +58,15 @@ class ChunkManifestArtifactRepository:
         )
         if current_only:
             query = query.where(Document.current_version_id == DocumentVersion.id)
+        if require_ready:
+            query = query.where(
+                exists().where(
+                    IngestionJob.tenant_id == tenant_id,
+                    IngestionJob.document_version_id == DocumentVersion.id,
+                    IngestionJob.job_type == "ingestion",
+                    IngestionJob.status == "succeeded",
+                )
+            )
         rows = await self._session.scalars(query.order_by(ChunkManifestArtifact.id).limit(limit))
         return tuple(rows)
 

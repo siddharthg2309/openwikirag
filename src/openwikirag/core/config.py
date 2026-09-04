@@ -1,6 +1,7 @@
 from functools import lru_cache
+from typing import Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,6 +44,15 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
     qdrant_url: str = Field(default="http://127.0.0.1:6333", min_length=1)
     qdrant_api_key: str | None = None
+    reranker_model: str = Field(default="", max_length=255)
+    reranker_revision: str = Field(default="", pattern=r"^(|[0-9a-f]{40})$")
+
+    @model_validator(mode="after")
+    def validate_reranker(self) -> Self:
+        if bool(self.reranker_model.strip()) != bool(self.reranker_revision):
+            raise ValueError("Reranker model and immutable revision must be configured together.")
+        return self
+
     ingestion_stream_name: str = Field(default="openwikirag:ingestion", min_length=1)
     outbox_batch_size: int = Field(default=100, ge=1, le=1000)
     ingestion_consumer_group: str = Field(default="openwikirag-ingestion", min_length=1)

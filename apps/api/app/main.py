@@ -15,6 +15,7 @@ from .auth_routes import router as auth_router
 from .dependencies import get_current_principal, get_session
 from .document_routes import router as document_router
 from .job_routes import router as job_router
+from .search_routes import router as search_router
 from .wiki_routes import router as wiki_router
 
 settings = get_settings()
@@ -29,6 +30,7 @@ app.include_router(auth_router)
 app.include_router(document_router)
 app.include_router(job_router)
 app.include_router(wiki_router)
+app.include_router(search_router)
 
 
 class MeResponse(BaseModel):

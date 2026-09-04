@@ -1601,3 +1601,27 @@ Evidence: 9 focused offline cases passed; full Qdrant-enabled suite: 323 passed,
 5. Give an interview explanation separating real model smoke proof from measured quality.
 
 Learner answers: pending.
+
+## Slice 6.7 — Authenticated canonical search
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: Expose bounded search with no client-controlled tenant. Authorization precedes retrieval; only current sources with succeeded ingestion are resolved. Optional reranking is explicit and unavailable models fail, never fall back. Alternatives rejected: trust projection text or uploaded status. Trade-off: source checks add I/O and stale projections may produce fewer hits.
+Execution and failures: POST /api/v1/search -> JWT/current membership -> SearchBody.to_request -> SearchService.search -> candidate retrieval -> RRF -> canonical dedup -> readiness/current/tenant joins -> checked object/chunk -> optional pair scoring -> SearchResult -> checksum-only success audit and commit. Request-owned Qdrant client closes in finally; no schema provisioning. 422 invalid controls, 401/403 identity, 503 dependency/integrity/model failure; absent/stale candidates are skipped. Audit failure rolls back and fails closed.
+Files: application/search.py, evidence.py, repositories/chunk_artifacts.py; API search_routes.py/search_dependencies.py; core/config.py; apps/api/tests/test_search.py.
+Evidence: 10 focused API/component tests passed; Qdrant-enabled full suite: 333 passed, 4 external/model skips. Ruff, mypy (106 files), diff passed. API source reads exercised SQLite/local objects/in-memory ranked candidates; live Qdrant legs covered by the existing full-suite integrations. New PostgreSQL source reads are not yet claimed.
+
+1. Why is authentication insufficient without current membership and source authorization?
+2. Trace search through all five retrieval stages and the audit commit.
+3. What happens when indexing finishes but ingestion has not committed success?
+4. Why skip stale evidence but fail on corrupted canonical bytes?
+5. Explain the endpoint and its proof in an interview without claiming semantic quality.
+
+Learner answers: pending.
+
+### Slice 6.7 final dependency review evidence
+
+The request-owned Qdrant client now disables the SDK's synchronous constructor
+compatibility probe. A dependency-level test verifies this flag, no schema calls,
+and client cleanup. Worker provisioning retains its compatibility behavior.
+Final proof: 11 focused cases; 334 passed/4 skipped in the Qdrant-enabled suite;
+Ruff, mypy (106 files), diff checks passed. This supersedes the earlier 333 count.

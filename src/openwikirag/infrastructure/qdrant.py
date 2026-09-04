@@ -152,10 +152,15 @@ class QdrantVectorIndex(VectorIndex):
         settings: Settings,
         *,
         config: QdrantCollectionConfig | None = None,
+        check_compatibility: bool = True,
     ) -> "QdrantVectorIndex":
         """Create an adapter from application-owned Qdrant settings."""
 
-        client = AsyncQdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key)
+        client = AsyncQdrantClient(
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
+            check_compatibility=check_compatibility,
+        )
         return cls(client, config=config)
 
     @property

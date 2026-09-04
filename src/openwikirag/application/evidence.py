@@ -109,6 +109,7 @@ class CanonicalEvidenceResolver:
         tenant_id: UUID,
         payload: VectorPointPayload,
         current_only: bool = True,
+        require_ready: bool = False,
     ) -> ResolvedEvidence:
         """Recheck ownership/freshness on every lookup, even for cached objects."""
         try:
@@ -126,6 +127,7 @@ class CanonicalEvidenceResolver:
                 source_type=payload.source_type,
                 pipeline_version=payload.pipeline_version,
                 current_only=current_only,
+                require_ready=require_ready,
                 limit=MAX_MANIFEST_VARIANTS + 1,
             )
         except Exception as exc:
