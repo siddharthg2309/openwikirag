@@ -22,7 +22,7 @@ from openwikirag.application.deduplication import EvidenceGroup, deduplicate_evi
 from openwikirag.application.evidence import EvidenceIntegrityError, EvidenceNotFoundError
 from openwikirag.application.fusion import ReciprocalRankFusionService
 from openwikirag.application.graph_projection import GraphProjectionError
-from openwikirag.application.reranking import RerankingProviderError
+from openwikirag.application.reranking import RerankingProviderError, RerankingService
 from openwikirag.application.retrieval import CandidateRetrievalResult, SearchFilters, SearchRequest
 from openwikirag.application.search import SearchService
 from openwikirag.application.source_evidence import SourceEvidence, SourceEvidenceResolver
@@ -112,7 +112,10 @@ class AnswerWorkflow:
         generation: GroundedGenerationService,
         checkpointer: BaseCheckpointSaver[Any],
         reauthorize: Callable[[], Awaitable[None]] | None = None,
+        cached_reranker: Callable[[dict[str, Any]], RerankingService] | None = None,
+        index_version: str = "hash-dense-sparse-v1",
     ):
+        self.cached_reranker, self.index_version = cached_reranker, index_version
         self.principal, self.search, self.resolver, self.generation = (
             principal,
             search,
@@ -230,7 +233,24 @@ class AnswerWorkflow:
                 if self.search.reranker is None:
                     raise RerankingProviderError("Reranker is unavailable.")
                 await self._fresh(sources)
-                sources = await self.search.reranker.rank_sources(
+                ranker = self.search.reranker
+                if self.cached_reranker is not None:
+                    import hashlib
+
+                    ranker = self.cached_reranker(
+                        {
+                            "tenant": str(self.tenant_id),
+                            "user": str(self.user_id),
+                            "query": spec.normalized_query,
+                            "request": request.model_dump(mode="json"),
+                            "generation": self.generation.provider.identity,
+                            "index": self.index_version,
+                            "history": hashlib.sha256(
+                                state.get("history", "").encode()
+                            ).hexdigest(),
+                        }
+                    )
+                sources = await ranker.rank_sources(
                     tenant_id=self.tenant_id,
                     query=spec.normalized_query,
                     evidence=sources,

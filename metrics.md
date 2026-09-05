@@ -467,3 +467,6 @@ Nine named workflow stages; at most 8 answer passages/citations, 6,000 prompt/sc
 ## Slice 9.2 measurements — 2026-09-05
 
 Six recent messages;2,000 UTF-8 byte summary;seven-day retention deadline;purge batches default100/max500. Full service-enabled suite379 passed/4 opt-in skips/1 known Qdrant warning in24.74s;139 typed files. Real PostgreSQL deadline preservation and actual LangGraph checkpoint deletion verified. No production throughput/latency or independent learner understanding claim.
+## Slice9.3 — scoped cache proof
+
+2026-09-05:384tests passed with PG/Qdrant/Neo4j/Redis enabled;2real-model opt-in skips;1knownQdrantwarning;23.51s.141typedsourcefiles. Two identical workflow executions caused one reranker invocation in the fixture. Redis TTL300seconds maximum; payload read8193bytes maximum. This is a controlled repeated-input proof, not a production hit-rate or latency improvement measurement.

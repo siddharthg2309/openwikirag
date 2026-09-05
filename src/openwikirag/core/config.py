@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     answer_model: str = Field(default="", max_length=255)
     answer_model_digest: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
     answer_base_url: str = Field(default="http://127.0.0.1:11434", min_length=1)
+    score_cache_enabled: bool = False
+    retrieval_index_version: str = Field(
+        default="hash-dense-sparse-v1", min_length=1, max_length=255
+    )
 
     @model_validator(mode="after")
     def validate_reranker(self) -> Self:

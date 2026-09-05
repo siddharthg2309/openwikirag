@@ -1,5 +1,6 @@
 """Real stages, persisted recovery, stale source rejection and private run scope."""
 
+import os
 from typing import Any
 from uuid import uuid4
 
@@ -7,6 +8,7 @@ import pytest
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from psycopg import AsyncConnection
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.tests.test_postgres_integration import postgres_session as postgres_session
@@ -28,6 +30,7 @@ from openwikirag.application.source_evidence import SourceEvidenceResolver
 from openwikirag.application.workflow import AnswerRequest, AnswerWorkflow
 from openwikirag.infrastructure.checkpoints import checkpoint_store, setup_checkpoints
 from openwikirag.infrastructure.models import Document, DocumentVersion
+from openwikirag.infrastructure.score_cache import CachedScorer
 from openwikirag.security.authorization import Principal, Role
 
 
@@ -192,3 +195,34 @@ async def test_graph_sources_reach_bounded_reranker(graph_context: GraphContext)
         await second.execute(
             uuid4(), AnswerRequest(query="Aurora", mode="sparse", graph_hops=2, rerank=True)
         )
+
+
+async def test_real_score_cache_reused_through_workflow(graph_context: GraphContext) -> None:
+    url = os.getenv("OPENWIKIRAG_TEST_REDIS_URL")
+    if not url:
+        pytest.skip("real Redis opt-in")
+
+    class Scorer:
+        identity = "workflow-cache-proof-v1"
+        calls = 0
+
+        async def score(self, pairs: tuple[tuple[str, str], ...]) -> tuple[float, ...]:
+            self.calls += 1
+            return tuple(0.5 for _ in pairs)
+
+    scorer = Scorer()
+    redis = Redis.from_url(url)
+    try:
+        for _ in range(2):
+            service = workflow(graph_context, InMemorySaver())
+            service.search.reranker = RerankingService(scorer)
+            service.cached_reranker = lambda scope: RerankingService(
+                CachedScorer(scorer, redis, scope)
+            )
+            result = await service.execute(
+                uuid4(), AnswerRequest(query="Aurora", mode="sparse", rerank=True)
+            )
+            assert result.citations
+        assert scorer.calls == 1
+    finally:
+        await redis.aclose()

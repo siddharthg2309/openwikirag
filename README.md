@@ -331,3 +331,6 @@ Conversation routes create/list/load tenant-and-user-private histories. Even a s
 ### Phase 9.2: bounded context and explicit memory
 
 Conversation context uses up to six recent validated messages, capped at2,000 UTF-8 bytes. POST/GET/DELETE `/api/v1/memory` manages explicit private preferences. Deletion invalidates saved preference snapshots and clears summaries immediately. DELETE conversations hides them and their answer runs. Seven-day purge deadlines are processed by `python -m openwikirag.retention_cli --batch 100` using operator credentials; schedule this command in deployment. Purge removes checkpoint copies as well as database content. Context never supplies citation evidence.
+### Phase9.3: scoped reranker score cache
+
+Enable OPENWIKIRAG_SCORE_CACHE_ENABLED with Redis and a configured reranker. Cache keys cover tenant/user/query/request filters/model identities/index version/history checksum and exact query-passage input. Numeric scores expire after300seconds. Current identity and canonical source validation still run. Bump OPENWIKIRAG_RETRIEVAL_INDEX_VERSION when index configuration changes. Redis stores scores, without source/context text; cache outage falls through to model scoring.

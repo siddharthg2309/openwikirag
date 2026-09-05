@@ -1782,3 +1782,14 @@ Learner answers: pending.
 ### Slice 9.2 verification update
 
 379 tests passed with PostgreSQL/Qdrant/Neo4j enabled, four opt-in skips;139 source files typed. Memory fingerprints prevent using withdrawn preferences. Purge clears saved context and checkpoints before removing memory tombstones. Explain why owner-wide invalidation is conservative, why a tombstone remains during partial cleanup, and why deployment must schedule the purge CLI. All answers remain pending.
+## Slice9.3 — Scoped score caching
+
+Status: unanswered; pause overridden through Phase9. Objective: avoid repeated reranker work while preserving owner/current-source checks. Flow: validate sources -> hash tenant/user/query/request/model/index/history/exactpairs -> Redis hit or provider -> normal ranking and answer validation. TTL300seconds; corrupt/outage cache is a miss. Verified: realRedis TTL/corruption/hit and repeated full workflow one scorer call;384passed fullsuite.
+
+1. Why must user and tenant both be in the cache scope?
+2. Trace cache miss, hit and expiry through reranking.
+3. Why does a cached score still require current source authorization?
+4. What changes invalidate keys, and why include exact passage bytes?
+5. Explain the tradeoff between caching scores and complete answers.
+
+Learner answers: pending.
