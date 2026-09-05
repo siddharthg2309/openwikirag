@@ -320,3 +320,8 @@ References: [Ollama chat](https://docs.ollama.com/api/chat), [model digest listi
 Nine LangGraph stages are inspectable and PostgreSQL-checkpointed. Operator setup: `uv run python -m openwikirag.checkpoint_cli --grant-role openwikirag_app` using the migration database URL. Requests use the application role and never run checkpoint DDL; SDK tables live in `ow_checkpoints`. Do not expose raw checkpoint storage to clients. External LangSmith tracing is explicitly disabled for answer execution. Source text in historical checkpoints requires the Phase9 retention path.
 
 A fresh real PostgreSQL connection resumed a failed generation stage under a non-superuser role. Source invalidation blocks answer publication. Raw workflow calls must be serialized by the owning service (8.3); they are not a public concurrency-safe API. [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence).
+### Phase 8.3: protected answer API
+
+`POST /api/v1/answers` creates a pending run. `POST /api/v1/answers/{id}/execute` executes/resumes it; `/stream` emits stage progress then a validated final answer. GET and trace are owner-only. Answers are checksum-protected and canonical citations are revalidated on every read. SSE intentionally omits raw model tokens. A PostgreSQL advisory lock prevents simultaneous writers; disconnects leave recoverable state.
+
+Configure `OPENWIKIRAG_ANSWER_MODEL`, its expected digest and local base URL, then use the checkpoint setup CLI. Socket-level SSE load/disconnect behavior and broad content-table RLS are not claimed.

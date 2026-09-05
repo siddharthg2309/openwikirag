@@ -51,11 +51,16 @@ class Settings(BaseSettings):
     graph_enabled: bool = False
     reranker_model: str = Field(default="", max_length=255)
     reranker_revision: str = Field(default="", pattern=r"^(|[0-9a-f]{40})$")
+    answer_model: str = Field(default="", max_length=255)
+    answer_model_digest: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
+    answer_base_url: str = Field(default="http://127.0.0.1:11434", min_length=1)
 
     @model_validator(mode="after")
     def validate_reranker(self) -> Self:
         if bool(self.reranker_model.strip()) != bool(self.reranker_revision):
             raise ValueError("Reranker model and immutable revision must be configured together.")
+        if bool(self.answer_model.strip()) != bool(self.answer_model_digest):
+            raise ValueError("Answer model and expected digest must be configured together.")
         return self
 
     ingestion_stream_name: str = Field(default="openwikirag:ingestion", min_length=1)

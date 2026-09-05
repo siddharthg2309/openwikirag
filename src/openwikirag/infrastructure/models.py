@@ -22,6 +22,53 @@ class Base(DeclarativeBase):
     """Base for persistence models owned by the infrastructure layer."""
 
 
+class AnswerRun(Base):
+    """Owner-private request and final answer; checkpoints are a separate store."""
+
+    __tablename__ = "answer_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','running','retryable','complete','failed')",
+            name="ck_answer_runs_status",
+        ),
+        CheckConstraint("attempts >= 0 AND attempts <= 5", name="ck_answer_runs_attempts"),
+        CheckConstraint(
+            "(status = 'complete') = (answer_json IS NOT NULL AND answer_checksum IS NOT NULL)",
+            name="ck_answer_runs_result",
+        ),
+        Index("ix_answer_runs_owner", "tenant_id", "user_id", "created_at"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    request_json: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    provider_identity: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default=text("'pending'")
+    )
+    attempts: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
+    answer_json: Mapped[dict[str, object] | None] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=True
+    )
+    answer_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        onupdate=text("CURRENT_TIMESTAMP"),
+    )
+
+
 class Tenant(Base):
     __tablename__ = "tenants"
 
@@ -427,9 +474,7 @@ class WikiPageArtifact(Base):
         index=True,
     )
     page_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
-    generation_result_checksum_sha256: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
+    generation_result_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     content_checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     artifact_object_key: Mapped[str] = mapped_column(String(512), nullable=False)
     review_status: Mapped[str] = mapped_column(
@@ -444,25 +489,36 @@ class KnowledgeArtifactRow(Base):
     """Canonical relationship facts; Neo4j is only a derived projection."""
 
     __tablename__ = "knowledge_artifacts"
-    __table_args__ = (UniqueConstraint(
-        "tenant_id", "manifest_id", "extractor", name="uq_knowledge_manifest_extractor",
-    ),)
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id",
+            "manifest_id",
+            "extractor",
+            name="uq_knowledge_manifest_extractor",
+        ),
+    )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
     tenant_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"),
-        nullable=False, index=True,
+        Uuid(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     document_version_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("document_versions.id", ondelete="CASCADE"), nullable=False,
+        Uuid(as_uuid=True),
+        ForeignKey("document_versions.id", ondelete="CASCADE"),
+        nullable=False,
     )
     manifest_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("chunk_manifest_artifacts.id", ondelete="CASCADE"),
+        Uuid(as_uuid=True),
+        ForeignKey("chunk_manifest_artifacts.id", ondelete="CASCADE"),
         nullable=False,
     )
     extractor: Mapped[str] = mapped_column(String(64), nullable=False)
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, object]] = mapped_column(
-        JSON().with_variant(JSONB, "postgresql"), nullable=False,
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=False,
     )
 
 
@@ -491,9 +547,7 @@ class IngestionJob(Base):
         String(32), nullable=False, default="pending", server_default=text("'pending'")
     )
     attempts: Mapped[int] = mapped_column(nullable=False, default=0, server_default=text("0"))
-    max_attempts: Mapped[int] = mapped_column(
-        nullable=False, default=3, server_default=text("3")
-    )
+    max_attempts: Mapped[int] = mapped_column(nullable=False, default=3, server_default=text("3"))
     available_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

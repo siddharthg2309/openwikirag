@@ -11,6 +11,7 @@ from openwikirag.core.logging import configure_logging
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.security.authorization import Principal, Role
 
+from .answer_routes import router as answer_router
 from .auth_routes import router as auth_router
 from .dependencies import get_current_principal, get_session
 from .document_routes import router as document_router
@@ -31,6 +32,7 @@ app.include_router(document_router)
 app.include_router(job_router)
 app.include_router(wiki_router)
 app.include_router(search_router)
+app.include_router(answer_router)
 
 
 class MeResponse(BaseModel):

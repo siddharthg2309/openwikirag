@@ -1737,3 +1737,17 @@ Evidence: 6 focused tests passed (3.94s), including fresh real PostgreSQL connec
 5. Explain the separate checkpoint schema, sensitive-state retention, and bounded-stage design in an interview.
 
 Learner answers: pending.
+## Slice 8.3 — Owner-private persisted answer runs and validated SSE
+
+Status: unanswered; pause overridden through Phase 9.
+Objective and design: preserve a run ID before failure, serialize execution, persist a supported answer, and expose only owner-safe progress/final data.
+Execution and failures: create -> owner lookup -> advisory lock -> checkpoint workflow -> validate -> answer commit -> final event. Dependency errors are retryable; invalid/stale/unauthorized output is permanent; a disconnect retains state.
+Evidence: 12 focused tests; final PG/Qdrant/Neo4j suite 373 passed/4 opt-in skips after review fixes; real Ollama passed in the prior full run; static/migration proof. Socket-level load is unverified.
+
+1. Why persist a pending run before retrieval/model inference?
+2. Trace timeout, checkpoint resume and final commit.
+3. Which threats are handled by owner predicates, live membership checks and the advisory lock?
+4. Why is progress plus a validated answer safer than raw token streaming?
+5. Explain the two-store consistency window and recovery tradeoff.
+
+Learner answers: pending.

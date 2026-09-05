@@ -289,6 +289,19 @@ class AnswerWorkflow:
         await self.validate_answer(answer)
         return answer
 
+    async def inspect(self, run_id: UUID) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        snapshot = await self.graph.aget_state(self.config(run_id))
+        if not snapshot.values:
+            return (), ()
+        await self._guard(cast(AnswerState, snapshot.values))
+        completed = tuple(snapshot.values.get("trace", []))
+        pending = tuple(snapshot.next)
+        if completed != self.stages[: len(completed)] or any(
+            item not in self.stages for item in pending
+        ):
+            raise GenerationInputError("Checkpoint trace is invalid.")
+        return completed, pending
+
     async def execute(self, run_id: UUID, request: AnswerRequest | None = None) -> GroundedAnswer:
         async for _ in self.events(run_id, request):
             pass
