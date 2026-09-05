@@ -22,8 +22,11 @@ they are not evidence of production scale or universal security.
 
 ## Current verified snapshot
 
-Last updated: 2026-09-04
-Current verified slice: Phase 6, Slice 6.6 — Canonical evidence and cross-encoder reranking.
+Last updated: 2026-09-05
+Current verified slice: Phase 9, Slice 9.3 — Scoped reranker score caching.
+Latest full service-enabled run: 384 passed, 2 optional model skips, 1 known local-Qdrant
+warning in 23.51 seconds. PostgreSQL, Redis, Qdrant and Neo4j integrations enabled;
+141 source files passed strict typing. Older rows below are historical slice evidence.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
