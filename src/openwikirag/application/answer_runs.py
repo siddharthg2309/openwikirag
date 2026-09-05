@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select, update
+from sqlalchemy import exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openwikirag.application.answers import (
@@ -21,7 +21,7 @@ from openwikirag.application.answers import (
 from openwikirag.application.evidence import EvidenceIntegrityError, EvidenceNotFoundError
 from openwikirag.application.workflow import AnswerRequest, AnswerWorkflow
 from openwikirag.infrastructure.database import set_tenant_context
-from openwikirag.infrastructure.models import AnswerRun, Membership, Tenant, User
+from openwikirag.infrastructure.models import AnswerRun, Conversation, Membership, Tenant, User
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.security.authorization import (
     AuthorizationError,
@@ -98,9 +98,51 @@ class AnswerRunService:
             UUID(self.principal.subject_id),
         )
         self.workflow.reauthorize = self.authorize
+        self.active_run_id: UUID | None = None
 
     async def authorize(self) -> None:
         await require_live_identity(self.session, self.principal)
+        if self.active_run_id is not None:
+            available = await self.session.scalar(
+                select(AnswerRun.id).where(
+                    AnswerRun.id == self.active_run_id,
+                    AnswerRun.tenant_id == self.tenant_id,
+                    AnswerRun.user_id == self.user_id,
+                    or_(
+                        AnswerRun.conversation_id.is_(None),
+                        exists().where(
+                            Conversation.id == AnswerRun.conversation_id,
+                            Conversation.tenant_id == self.tenant_id,
+                            Conversation.user_id == self.user_id,
+                            Conversation.status == "active",
+                        ),
+                    ),
+                )
+            )
+            if available is None:
+                raise AuthorizationError("The run's conversation is no longer available.")
+            withdrawn = await self.session.scalar(
+                select(AnswerRun.context_purge_after).where(
+                    AnswerRun.id == self.active_run_id,
+                    AnswerRun.tenant_id == self.tenant_id,
+                    AnswerRun.user_id == self.user_id,
+                )
+            )
+            if withdrawn is not None:
+                raise AuthorizationError("Memory consent changed; create a new answer run.")
+            expected = await self.session.scalar(
+                select(AnswerRun.memory_fingerprint).where(
+                    AnswerRun.id == self.active_run_id,
+                    AnswerRun.tenant_id == self.tenant_id,
+                    AnswerRun.user_id == self.user_id,
+                )
+            )
+            if expected is not None:
+                from openwikirag.application.conversations import UserMemoryService
+
+                current = await UserMemoryService(self.session, self.principal).fingerprint()
+                if current != expected:
+                    raise AuthorizationError("Memory consent changed; create a new answer run.")
 
     async def lookup(self, run_id: UUID) -> AnswerRun:
         await self.authorize()
@@ -110,6 +152,15 @@ class AnswerRunService:
                 AnswerRun.id == run_id,
                 AnswerRun.tenant_id == self.tenant_id,
                 AnswerRun.user_id == self.user_id,
+                or_(
+                    AnswerRun.conversation_id.is_(None),
+                    exists().where(
+                        Conversation.id == AnswerRun.conversation_id,
+                        Conversation.tenant_id == self.tenant_id,
+                        Conversation.user_id == self.user_id,
+                        Conversation.status == "active",
+                    ),
+                ),
             )
             .execution_options(populate_existing=True)
         )
@@ -123,14 +174,27 @@ class AnswerRunService:
         spec = request.search(self.tenant_id)
         pack_context(tenant_id=self.tenant_id, query=spec.normalized_query, evidence=())
         run_id = uuid4()
+        history = ""
+        memory_fingerprint = None
         if request.conversation_id is not None:
             from openwikirag.application.conversations import (
                 ConversationNotFoundError,
                 ConversationService,
+                UserMemoryService,
             )
 
-            conversations = ConversationService(self.session, self.principal)
+            conversations = ConversationService(
+                self.session, self.principal, self.workflow.validate_answer
+            )
             try:
+                memories = await UserMemoryService(self.session, self.principal).list()
+                memory_fingerprint = await UserMemoryService(
+                    self.session, self.principal
+                ).fingerprint()
+                history = await conversations.context(
+                    request.conversation_id,
+                    tuple(f"{item.memory_key}: {item.memory_value}" for item in memories),
+                )
                 await conversations.append(
                     request.conversation_id, "user", {"text": spec.normalized_query}
                 )
@@ -146,6 +210,9 @@ class AnswerRunService:
                 request_json=request.model_dump(mode="json"),
                 provider_identity=self.workflow.generation.provider.identity,
                 conversation_id=request.conversation_id,
+                history_context=history or None,
+                history_checksum=hashlib.sha256(history.encode()).hexdigest() if history else None,
+                memory_fingerprint=memory_fingerprint,
             )
         )
         await AuditRepository(self.session).record(
@@ -199,13 +266,19 @@ class AnswerRunService:
             if row.provider_identity != self.workflow.generation.provider.identity:
                 raise RunConflictError("Run requires its original provider configuration.")
             request = AnswerRequest.model_validate(row.request_json)
+            history = row.history_context or ""
+            if bool(history) != bool(row.history_checksum) or (
+                history and hashlib.sha256(history.encode()).hexdigest() != row.history_checksum
+            ):
+                raise RunConflictError("Conversation context checksum mismatch.")
             row.status, row.attempts, row.error_code = "running", row.attempts + 1, None
             await self.session.commit()
             try:
                 async with asyncio.timeout(180):
+                    self.active_run_id = run_id
                     snapshot = await self.workflow.graph.aget_state(self.workflow.config(run_id))
                     async for stage in self.workflow.events(
-                        run_id, None if snapshot.values else request
+                        run_id, None if snapshot.values else request, history
                     ):
                         yield "progress", {"id": str(run_id), "stage": stage}
                     answer = await self.workflow.result(run_id)
@@ -272,6 +345,8 @@ class AnswerRunService:
                 )
                 await self.session.commit()
                 raise
+            finally:
+                self.active_run_id = None
             # Cancellation/GeneratorExit leaves durable running state; closing the
             # mutex connection releases ownership and permits checkpoint recovery.
             yield "answer", final.model_dump(mode="json")

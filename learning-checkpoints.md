@@ -1765,3 +1765,20 @@ Evidence: 8 focused tests; full suite 375 passed/4 skips; static/migration check
 5. Explain the 200-message hard bound versus pagination/summarization alternatives.
 
 Learner answers: pending.
+## Slice 9.2 — Bounded context, explicit memory and retention (in progress)
+
+Status: unanswered; quiz pause overridden through Phase 9. Implementation verification remains in progress.
+Objective: preserve useful conversation context while making deletion enforceable across database rows and workflow checkpoints.
+Design: the latest six messages produce a deterministic summary capped at 2,000 UTF-8 bytes. Explicit user memory is private context. Answer quotes still require canonical source evidence. Deletion hides records immediately and sets a seven-day purge deadline. Purge deletes workflow checkpoints before deleting their owning conversation transaction; a failure can be retried.
+Evidence so far: PostgreSQL integration proved preservation before deadline and deletion of conversation, answer run, memory and actual LangGraph checkpoint after deadline. A separate regression proves deletion during inference blocks publication.
+
+1. Why can conversation context clarify a question without becoming citation evidence?
+2. Trace soft deletion through the seven-day deadline and checkpoint/database purge.
+3. What happens if checkpoint deletion succeeds but the database transaction fails?
+4. What information does a deterministic bounded summary lose?
+5. How would you explain explicit memory consent and deletion guarantees in an interview?
+
+Learner answers: pending.
+### Slice 9.2 verification update
+
+379 tests passed with PostgreSQL/Qdrant/Neo4j enabled, four opt-in skips;139 source files typed. Memory fingerprints prevent using withdrawn preferences. Purge clears saved context and checkpoints before removing memory tombstones. Explain why owner-wide invalidation is conservative, why a tombstone remains during partial cleanup, and why deployment must schedule the purge CLI. All answers remain pending.

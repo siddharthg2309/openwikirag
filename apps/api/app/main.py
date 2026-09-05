@@ -13,6 +13,7 @@ from openwikirag.security.authorization import Principal, Role
 
 from .answer_routes import router as answer_router
 from .auth_routes import router as auth_router
+from .conversation_routes import memory_router
 from .conversation_routes import router as conversation_router
 from .dependencies import get_current_principal, get_session
 from .document_routes import router as document_router
@@ -35,6 +36,7 @@ app.include_router(wiki_router)
 app.include_router(search_router)
 app.include_router(answer_router)
 app.include_router(conversation_router)
+app.include_router(memory_router)
 
 
 class MeResponse(BaseModel):

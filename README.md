@@ -328,3 +328,6 @@ Configure `OPENWIKIRAG_ANSWER_MODEL`, its expected digest and local base URL, th
 ### Phase 9.1: private durable conversations
 
 Conversation routes create/list/load tenant-and-user-private histories. Even a same-tenant admin cannot read another user's conversation. Answer requests may include `conversation_id`; the normalized question and final validated answer append atomically at immutable sequence numbers. Reads cap at 200 messages, verify checksums and revalidate assistant citations. PostgreSQL composite foreign keys enforce conversation/tenant/user lineage. History is context—not canonical enterprise knowledge.
+### Phase 9.2: bounded context and explicit memory
+
+Conversation context uses up to six recent validated messages, capped at2,000 UTF-8 bytes. POST/GET/DELETE `/api/v1/memory` manages explicit private preferences. Deletion invalidates saved preference snapshots and clears summaries immediately. DELETE conversations hides them and their answer runs. Seven-day purge deadlines are processed by `python -m openwikirag.retention_cli --batch 100` using operator credentials; schedule this command in deployment. Purge removes checkpoint copies as well as database content. Context never supplies citation evidence.

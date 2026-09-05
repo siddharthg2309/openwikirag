@@ -60,6 +60,7 @@ class AnswerState(TypedDict, total=False):
     sources: list[dict[str, Any]] | None
     context: dict[str, Any] | None
     answer: dict[str, Any] | None
+    history: str
     trace: list[str]
 
 
@@ -238,7 +239,10 @@ class AnswerWorkflow:
             return {"sources": [item.model_dump(mode="json") for item in sources]}
         if name == "context":
             context = pack_context(
-                tenant_id=self.tenant_id, query=spec.normalized_query, evidence=sources
+                tenant_id=self.tenant_id,
+                query=spec.normalized_query,
+                evidence=sources,
+                history=state.get("history", ""),
             )
             return {"context": context.model_dump(mode="json"), "sources": None}
         if name == "generate":
@@ -252,15 +256,15 @@ class AnswerWorkflow:
         raise GenerationInputError("Unknown workflow stage.")
 
     async def events(
-        self, run_id: UUID, request: AnswerRequest | None = None
+        self, run_id: UUID, request: AnswerRequest | None = None, history: str = ""
     ) -> AsyncIterator[str]:
         # Do not let a developer's global tracing environment export source text.
         with tracing_context(enabled=False, parent=False):
-            async for stage in self._events(run_id, request):
+            async for stage in self._events(run_id, request, history):
                 yield stage
 
     async def _events(
-        self, run_id: UUID, request: AnswerRequest | None = None
+        self, run_id: UUID, request: AnswerRequest | None = None, history: str = ""
     ) -> AsyncIterator[str]:
         config = self.config(run_id)
         snapshot = await self.graph.aget_state(config)
@@ -278,6 +282,7 @@ class AnswerWorkflow:
                 provider=self.generation.provider.identity,
                 request=request.model_dump(mode="json"),
                 trace=[],
+                history=history,
             )
             await self._guard(initial)
         async for update in self.graph.astream(

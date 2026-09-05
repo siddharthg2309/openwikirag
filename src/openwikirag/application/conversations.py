@@ -4,22 +4,34 @@ import hashlib
 import json
 import unicodedata
 from collections.abc import Awaitable, Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openwikirag.application.answer_runs import require_live_identity
 from openwikirag.application.answers import GroundedAnswer
-from openwikirag.infrastructure.models import Conversation, ConversationMessage
+from openwikirag.infrastructure.models import (
+    AnswerRun,
+    Conversation,
+    ConversationMessage,
+    UserMemory,
+)
 from openwikirag.security.authorization import Principal
 
 
 class ConversationNotFoundError(Exception):
     pass
+
+
+def utf8_prefix(value: str, budget: int) -> str:
+    encoded = value.encode()
+    if len(encoded) <= budget:
+        return value
+    return encoded[:budget].decode("utf-8", errors="ignore")
 
 
 class MessageView(BaseModel):
@@ -169,3 +181,101 @@ class ConversationService:
             )
         ).all()
         return tuple(ConversationView(id=row.id, title=row.title, messages=()) for row in rows)
+
+    async def context(self, conversation_id: UUID, memories: tuple[str, ...] = ()) -> str:
+        row = await self._owned(conversation_id, lock=True)
+        view = await self.get(conversation_id)
+        lines: list[str] = []
+        for message in view.messages[-6:]:
+            if message.role == "user":
+                text = cast(str, message.content["text"])
+                lines.append("Prior user: " + utf8_prefix(text, 300))
+            else:
+                answer = GroundedAnswer.model_validate(message.content["answer"])
+                lines.append("Prior supported answer: " + utf8_prefix(answer.text, 300))
+        lines.extend("Explicit user preference: " + utf8_prefix(item, 200) for item in memories[:5])
+        summary = utf8_prefix("\n".join(lines), 2000)
+        row.summary_text = summary or None
+        row.summary_checksum = hashlib.sha256(summary.encode()).hexdigest() if summary else None
+        row.summary_through_sequence = row.next_sequence - 1
+        return summary
+
+    async def delete(self, conversation_id: UUID) -> None:
+        row = await self._owned(conversation_id, lock=True)
+        now = datetime.now(UTC)
+        row.status, row.deleted_at, row.purge_after = "deleted", now, now + timedelta(days=7)
+
+
+class UserMemoryService:
+    def __init__(self, session: AsyncSession, principal: Principal):
+        self.session, self.principal = session, principal
+        self.tenant_id, self.user_id = UUID(principal.tenant_id), UUID(principal.subject_id)
+
+    async def create(self, key: str, value: str) -> UserMemory:
+        await require_live_identity(self.session, self.principal)
+        key = " ".join(unicodedata.normalize("NFKC", key).split()).casefold()
+        value = " ".join(unicodedata.normalize("NFKC", value).split())
+        if not key or len(key) > 64 or not value or len(value) > 500:
+            raise ValueError("Memory key or value is invalid.")
+        row = UserMemory(
+            tenant_id=self.tenant_id, user_id=self.user_id, memory_key=key, memory_value=value
+        )
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def list(self) -> tuple[UserMemory, ...]:
+        await require_live_identity(self.session, self.principal)
+        rows = await self.session.scalars(
+            select(UserMemory)
+            .where(
+                UserMemory.tenant_id == self.tenant_id,
+                UserMemory.user_id == self.user_id,
+                UserMemory.deleted_at.is_(None),
+            )
+            .order_by(UserMemory.memory_key)
+            .limit(20)
+        )
+        return tuple(rows)
+
+    async def fingerprint(self) -> str:
+        rows = await self.list()
+        return content_checksum(
+            {"memories": [[str(row.id), row.memory_key, row.memory_value] for row in rows]}
+        )
+
+    async def delete(self, memory_id: UUID) -> None:
+        await require_live_identity(self.session, self.principal)
+        row = await self.session.scalar(
+            select(UserMemory)
+            .where(
+                UserMemory.id == memory_id,
+                UserMemory.tenant_id == self.tenant_id,
+                UserMemory.user_id == self.user_id,
+                UserMemory.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ConversationNotFoundError("Memory is unavailable.")
+        now = datetime.now(UTC)
+        row.deleted_at, row.purge_after = now, now + timedelta(days=7)
+        # Conservatively invalidate every saved preference snapshot for this owner.
+        await self.session.execute(
+            update(AnswerRun)
+            .where(
+                AnswerRun.tenant_id == self.tenant_id,
+                AnswerRun.user_id == self.user_id,
+                AnswerRun.memory_fingerprint.is_not(None),
+                AnswerRun.context_purge_after.is_(None),
+            )
+            .values(context_purge_after=row.purge_after)
+        )
+        await self.session.execute(
+            update(Conversation)
+            .where(
+                Conversation.tenant_id == self.tenant_id,
+                Conversation.user_id == self.user_id,
+            )
+            .values(summary_text=None, summary_checksum=None, summary_through_sequence=0)
+        )

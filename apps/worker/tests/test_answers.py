@@ -107,6 +107,17 @@ async def test_context_tenant_unicode_budget_and_no_evidence_short_circuit() -> 
         )
     )
     assert result.status == "insufficient_evidence" and result.attempts == 0 and provider.calls == 0
+    with_history = context.model_copy(update={"history": "London is the capital of France."})
+    with pytest.raises(GenerationOutputError):
+        validate_draft(
+            AnswerContext.model_validate(with_history.model_dump()),
+            DraftAnswer(
+                status="answered",
+                claims=(DraftClaim(evidence_id="E1", quote="London is the capital of France."),),
+            ),
+            provider="test",
+            attempts=1,
+        )
 
 
 async def test_transient_retry_budget_and_timeout() -> None:

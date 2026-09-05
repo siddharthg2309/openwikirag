@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -32,8 +33,13 @@ from openwikirag.application.answers import (
     GenerationRetryableError,
     GroundedGenerationService,
 )
-from openwikirag.application.conversations import ConversationService
+from openwikirag.application.conversations import (
+    ConversationNotFoundError,
+    ConversationService,
+    UserMemoryService,
+)
 from openwikirag.application.evidence import EvidenceNotFoundError
+from openwikirag.application.retention import purge_due
 from openwikirag.application.source_evidence import SourceEvidenceResolver
 from openwikirag.application.workflow import AnswerRequest, AnswerWorkflow
 from openwikirag.infrastructure.models import (
@@ -42,6 +48,7 @@ from openwikirag.infrastructure.models import (
     Document,
     DocumentVersion,
     User,
+    UserMemory,
 )
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
 from openwikirag.infrastructure.run_mutex import PostgresRunMutex
@@ -53,8 +60,10 @@ class Provider:
 
     def __init__(self, fail: bool = False):
         self.fail = fail
+        self.contexts: list[AnswerContext] = []
 
     async def generate(self, context: AnswerContext) -> DraftAnswer:
+        self.contexts.append(context)
         if self.fail:
             raise GenerationRetryableError("fixture outage")
         return DraftAnswer(
@@ -119,10 +128,17 @@ async def run_context(graph_context: GraphContext) -> RunContext:
 async def test_persisted_success_trace_checksum_and_idempotent_execute(
     run_context: RunContext,
 ) -> None:
-    service = run_context.service()
+    provider = Provider()
+    service = run_context.service(provider)
     conversation = await ConversationService(
         run_context.graph.session, run_context.graph.principal
     ).create("Graph questions")
+    await ConversationService(run_context.graph.session, run_context.graph.principal).append(
+        conversation.id, "user", {"text": "Earlier graph topic"}
+    )
+    await UserMemoryService(run_context.graph.session, run_context.graph.principal).create(
+        "answer style", "concise"
+    )
     await run_context.graph.session.commit()
     created = await service.create(
         AnswerRequest(
@@ -144,8 +160,10 @@ async def test_persisted_success_trace_checksum_and_idempotent_execute(
         run_context.graph.session, run_context.graph.principal, service.workflow.validate_answer
     )
     history = await history_service.get(conversation.id)
-    assert [item.role for item in history.messages] == ["user", "assistant"]
-    assert [item.sequence for item in history.messages] == [1, 2]
+    assert [item.role for item in history.messages] == ["user", "user", "assistant"]
+    assert [item.sequence for item in history.messages] == [1, 2, 3]
+    assert provider.contexts and "Earlier graph topic" in provider.contexts[0].history
+    assert "answer style: concise" in provider.contexts[0].history
     cited = await run_context.graph.session.get(
         DocumentVersion, final.answer.citations[0].document_version_id
     )
@@ -293,3 +311,94 @@ async def test_trace_rejects_corrupt_checkpoint_values(run_context: RunContext) 
     )
     with pytest.raises(GenerationInputError, match="trace"):
         await service.trace(created.id)
+
+
+async def test_soft_delete_hides_then_purge_removes_rows_and_checkpoint(
+    run_context: RunContext,
+) -> None:
+    ctx = run_context
+    conversation_service = ConversationService(ctx.graph.session, ctx.graph.principal)
+    conversation = await conversation_service.create("Temporary")
+    memory_service = UserMemoryService(ctx.graph.session, ctx.graph.principal)
+    memory = await memory_service.create("tone", "brief")
+    await ctx.graph.session.commit()
+    run_service = ctx.service()
+    run = await run_service.create(
+        AnswerRequest(query="Aurora", mode="sparse", conversation_id=conversation.id)
+    )
+    assert (await run_service.execute(run.id)).status == "complete"
+    await conversation_service.delete(conversation.id)
+    await memory_service.delete(memory.id)
+    await ctx.graph.session.commit()
+    with pytest.raises(ConversationNotFoundError):
+        await conversation_service.get(conversation.id)
+    with pytest.raises(RunNotFoundError):
+        await run_service.get(run.id)
+    assert await memory_service.list() == ()
+    stored_conversation = await ctx.graph.session.get(Conversation, conversation.id)
+    stored_memory = await ctx.graph.session.get(UserMemory, memory.id)
+    assert stored_conversation is not None and stored_memory is not None
+    stored_conversation.purge_after = datetime.now(UTC)
+    stored_memory.purge_after = datetime.now(UTC)
+    await ctx.graph.session.commit()
+    counts = await purge_due(ctx.graph.session, ctx.saver, now=datetime.now(UTC))
+    await ctx.graph.session.commit()
+    assert counts == (1, 1, 1)
+    assert await ctx.graph.session.get(Conversation, conversation.id) is None
+    assert await ctx.graph.session.get(UserMemory, memory.id) is None
+    assert not (
+        await run_service.workflow.graph.aget_state(run_service.workflow.config(run.id))
+    ).values
+
+
+async def test_conversation_deleted_during_inference_stops_publication(
+    run_context: RunContext,
+) -> None:
+    ctx = run_context
+    conversations = ConversationService(ctx.graph.session, ctx.graph.principal)
+    conversation = await conversations.create("Delete during inference")
+    await ctx.graph.session.commit()
+
+    class DeletingProvider(Provider):
+        async def generate(self, context: AnswerContext) -> DraftAnswer:
+            await conversations.delete(conversation.id)
+            await ctx.graph.session.commit()
+            return await super().generate(context)
+
+    service = ctx.service(DeletingProvider())
+    run = await service.create(
+        AnswerRequest(query="Aurora", mode="sparse", conversation_id=conversation.id)
+    )
+    with pytest.raises(AuthorizationError):
+        await service.execute(run.id)
+    stored = await ctx.graph.session.get(AnswerRun, run.id)
+    assert stored is not None and stored.answer_json is None and stored.status == "failed"
+
+
+async def test_deleted_memory_cannot_be_used_by_pending_run(run_context: RunContext) -> None:
+    ctx = run_context
+    conversations = ConversationService(ctx.graph.session, ctx.graph.principal)
+    conversation = await conversations.create("Memory withdrawal")
+    memories = UserMemoryService(ctx.graph.session, ctx.graph.principal)
+    memory = await memories.create("style", "brief")
+    await ctx.graph.session.commit()
+    provider = Provider()
+    service = ctx.service(provider)
+    run = await service.create(
+        AnswerRequest(query="Aurora", mode="sparse", conversation_id=conversation.id)
+    )
+    await memories.delete(memory.id)
+    await ctx.graph.session.commit()
+    with pytest.raises(AuthorizationError, match="Memory consent"):
+        await service.execute(run.id)
+    assert provider.contexts == []
+    stored = await ctx.graph.session.get(AnswerRun, run.id)
+    assert stored is not None and stored.context_purge_after is not None
+    counts = await purge_due(
+        ctx.graph.session, ctx.saver, now=stored.context_purge_after.replace(tzinfo=UTC)
+    )
+    await ctx.graph.session.commit()
+    assert counts[1] == 1
+    await ctx.graph.session.refresh(stored)
+    assert stored.history_context is None and stored.memory_fingerprint is None
+    assert stored.context_purge_after is not None  # remains a permanent invalidation marker

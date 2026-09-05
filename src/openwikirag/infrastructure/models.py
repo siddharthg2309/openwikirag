@@ -60,6 +60,12 @@ class AnswerRun(Base):
     request_json: Mapped[dict[str, object]] = mapped_column(
         JSON().with_variant(JSONB(), "postgresql"), nullable=False
     )
+    history_context: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    history_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    memory_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    context_purge_after: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     provider_identity: Mapped[str] = mapped_column(String(512), nullable=False)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="pending", server_default=text("'pending'")
@@ -85,6 +91,15 @@ class Conversation(Base):
     __tablename__ = "conversations"
     __table_args__ = (
         CheckConstraint("status IN ('active','deleted')", name="ck_conversations_status"),
+        CheckConstraint(
+            "(status = 'deleted') = (deleted_at IS NOT NULL AND purge_after IS NOT NULL)",
+            name="ck_conversations_deletion",
+        ),
+        CheckConstraint(
+            "(summary_text IS NULL) = (summary_checksum IS NULL)",
+            name="ck_conversations_summary",
+        ),
+        CheckConstraint("summary_through_sequence >= 0", name="ck_conversations_summary_sequence"),
         Index("ix_conversations_owner_updated", "tenant_id", "user_id", "updated_at"),
         UniqueConstraint("id", "tenant_id", "user_id", name="uq_conversations_owner_identity"),
     )
@@ -100,6 +115,13 @@ class Conversation(Base):
         String(16), nullable=False, default="active", server_default=text("'active'")
     )
     next_sequence: Mapped[int] = mapped_column(nullable=False, default=1, server_default=text("1"))
+    summary_text: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+    summary_checksum: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    summary_through_sequence: Mapped[int] = mapped_column(
+        nullable=False, default=0, server_default=text("0")
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
@@ -138,6 +160,31 @@ class ConversationMessage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
+
+
+class UserMemory(Base):
+    __tablename__ = "user_memories"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", "memory_key", name="uq_user_memory_key"),
+        CheckConstraint(
+            "(deleted_at IS NULL) = (purge_after IS NULL)", name="ck_user_memory_deletion"
+        ),
+        Index("ix_user_memories_owner", "tenant_id", "user_id"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    memory_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    memory_value: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    purge_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Tenant(Base):

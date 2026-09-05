@@ -464,3 +464,6 @@ Nine named workflow stages; at most 8 answer passages/citations, 6,000 prompt/sc
 ## Slice 9.1 — Durable conversations (2026-09-05)
 
 50 conversations maximum per list response; 200 immutable messages maximum per conversation; 4 concurrent-order proof messages; 8 focused tests; final service suite 375 passed/4 opt-in skips/1 known local-Qdrant warning in21.96s; Ruff/mypy136 files. Development proof only—no production concurrency or storage-retention scale claim. Learning pending.
+## Slice 9.2 measurements — 2026-09-05
+
+Six recent messages;2,000 UTF-8 byte summary;seven-day retention deadline;purge batches default100/max500. Full service-enabled suite379 passed/4 opt-in skips/1 known Qdrant warning in24.74s;139 typed files. Real PostgreSQL deadline preservation and actual LangGraph checkpoint deletion verified. No production throughput/latency or independent learner understanding claim.
