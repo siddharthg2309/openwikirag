@@ -50,7 +50,14 @@ async def create_answer(
 ) -> RunView:
     try:
         return await service.create(body)
-    except (GenerationError, EvidenceError, AuthorizationError, SQLAlchemyError) as exc:
+    except (
+        RunNotFoundError,
+        RunConflictError,
+        GenerationError,
+        EvidenceError,
+        AuthorizationError,
+        SQLAlchemyError,
+    ) as exc:
         raise mapped(exc) from exc
 
 

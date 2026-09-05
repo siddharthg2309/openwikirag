@@ -11,6 +11,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from sqlalchemy import select
 
 from apps.api.app.answer_dependencies import get_answer_run_service
+from apps.api.app.dependencies import get_session
 from apps.api.app.main import app
 from apps.api.tests.test_jobs import make_token
 from apps.api.tests.test_postgres_integration import postgres_url as postgres_url
@@ -20,6 +21,7 @@ from apps.worker.tests.test_graph_retrieval import session as session
 from openwikirag.application.answer_runs import (
     AnswerRunService,
     RunBusyError,
+    RunConflictError,
     RunNotFoundError,
 )
 from openwikirag.application.answers import (
@@ -30,9 +32,17 @@ from openwikirag.application.answers import (
     GenerationRetryableError,
     GroundedGenerationService,
 )
+from openwikirag.application.conversations import ConversationService
+from openwikirag.application.evidence import EvidenceNotFoundError
 from openwikirag.application.source_evidence import SourceEvidenceResolver
 from openwikirag.application.workflow import AnswerRequest, AnswerWorkflow
-from openwikirag.infrastructure.models import AnswerRun, User
+from openwikirag.infrastructure.models import (
+    AnswerRun,
+    Conversation,
+    Document,
+    DocumentVersion,
+    User,
+)
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
 from openwikirag.infrastructure.run_mutex import PostgresRunMutex
 from openwikirag.security.authorization import AuthorizationError, Principal, Role
@@ -110,7 +120,18 @@ async def test_persisted_success_trace_checksum_and_idempotent_execute(
     run_context: RunContext,
 ) -> None:
     service = run_context.service()
-    created = await service.create(AnswerRequest(query="Aurora", mode="sparse", graph_hops=1))
+    conversation = await ConversationService(
+        run_context.graph.session, run_context.graph.principal
+    ).create("Graph questions")
+    await run_context.graph.session.commit()
+    created = await service.create(
+        AnswerRequest(
+            query="Aurora",
+            mode="sparse",
+            graph_hops=1,
+            conversation_id=conversation.id,
+        )
+    )
     assert created.status == "pending" and created.attempts == 0 and created.answer is None
     final = await service.execute(created.id)
     assert final.status == "complete" and final.attempts == 1 and final.answer
@@ -119,6 +140,22 @@ async def test_persisted_success_trace_checksum_and_idempotent_execute(
     assert trace["completed_stages"] == list(service.workflow.stages)
     row = await run_context.graph.session.get(AnswerRun, created.id)
     assert row is not None and row.answer_checksum and "Aurora" not in str(row.error_code)
+    history_service = ConversationService(
+        run_context.graph.session, run_context.graph.principal, service.workflow.validate_answer
+    )
+    history = await history_service.get(conversation.id)
+    assert [item.role for item in history.messages] == ["user", "assistant"]
+    assert [item.sequence for item in history.messages] == [1, 2]
+    cited = await run_context.graph.session.get(
+        DocumentVersion, final.answer.citations[0].document_version_id
+    )
+    assert cited is not None
+    document = await run_context.graph.session.get(Document, cited.document_id)
+    assert document is not None
+    document.current_version_id = None
+    await run_context.graph.session.commit()
+    with pytest.raises(EvidenceNotFoundError):
+        await history_service.get(conversation.id)
 
 
 async def test_retryable_run_resumes_and_owner_cannot_be_substituted(
@@ -138,10 +175,25 @@ async def test_retryable_run_resumes_and_owner_cannot_be_substituted(
         run_context.graph.tenant_id, other.id, Role.ADMIN
     )
     await run_context.graph.session.commit()
+    other_principal = Principal(str(other.id), str(run_context.graph.tenant_id), Role.ADMIN)
     with pytest.raises(RunNotFoundError):
-        await run_context.service(
-            principal=Principal(str(other.id), str(run_context.graph.tenant_id), Role.ADMIN)
-        ).get(created.id)
+        await run_context.service(principal=other_principal).get(created.id)
+    conversation = await ConversationService(
+        run_context.graph.session, run_context.graph.principal
+    ).create()
+    await run_context.graph.session.commit()
+    with pytest.raises(RunNotFoundError):
+        await run_context.service(principal=other_principal).create(
+            AnswerRequest(query="Aurora", conversation_id=conversation.id)
+        )
+    owned = await run_context.graph.session.get(Conversation, conversation.id)
+    assert owned is not None
+    owned.next_sequence = 201
+    await run_context.graph.session.commit()
+    with pytest.raises(RunConflictError):
+        await run_context.service().create(
+            AnswerRequest(query="Aurora", conversation_id=conversation.id)
+        )
 
 
 async def test_revoked_user_blocks_release_and_no_answer_is_persisted(
@@ -208,6 +260,27 @@ async def test_real_postgres_mutex_rejects_concurrent_owner(postgres_url: str) -
         with pytest.raises(RunBusyError):
             async with mutex.hold(key):
                 pytest.fail("second holder entered")
+
+
+async def test_conversation_http_owner_boundary(run_context: RunContext) -> None:
+    async def session_override() -> AsyncIterator[object]:
+        yield run_context.graph.session
+
+    app.dependency_overrides[get_session] = session_override
+    headers = {"Authorization": f"Bearer {run_context.token}"}
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                "/api/v1/conversations", json={"title": "  My   research "}, headers=headers
+            )
+            assert created.status_code == 201 and created.json()["title"] == "My research"
+            conversation_id = created.json()["id"]
+            listed = await client.get("/api/v1/conversations", headers=headers)
+            assert listed.status_code == 200 and conversation_id in listed.text
+            loaded = await client.get(f"/api/v1/conversations/{conversation_id}", headers=headers)
+            assert loaded.status_code == 200 and loaded.json()["messages"] == []
+    finally:
+        app.dependency_overrides.pop(get_session, None)
 
 
 async def test_trace_rejects_corrupt_checkpoint_values(run_context: RunContext) -> None:

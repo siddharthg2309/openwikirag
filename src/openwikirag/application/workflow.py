@@ -37,6 +37,7 @@ class AnswerRequest(BaseModel):
     limit: int = Field(default=8, ge=1, le=8, strict=True)
     rerank: bool = Field(default=False, strict=True)
     graph_hops: int = Field(default=0, ge=0, le=2, strict=True)
+    conversation_id: UUID | None = None
     filters: SearchFilters = Field(default_factory=SearchFilters)
 
     def search(self, tenant_id: UUID) -> SearchRequest:
@@ -60,6 +61,32 @@ class AnswerState(TypedDict, total=False):
     context: dict[str, Any] | None
     answer: dict[str, Any] | None
     trace: list[str]
+
+
+async def validate_current_answer(
+    answer: GroundedAnswer,
+    tenant_id: UUID,
+    resolver: SourceEvidenceResolver,
+) -> None:
+    """Re-resolve every citation before releasing a stored or cached answer."""
+    answer = GroundedAnswer.model_validate(answer.model_dump())
+    for citation in answer.citations:
+        fresh = await resolver.resolve(
+            tenant_id=tenant_id,
+            manifest_id=citation.manifest_id,
+            chunk_id=citation.chunk_id,
+        )
+        offset = citation.start_char - fresh.chunk.normalized_start_char
+        if (
+            fresh.identity != citation.evidence_id
+            or fresh.document_id != citation.document_id
+            or fresh.document_version_id != citation.document_version_id
+            or offset < 0
+            or fresh.chunk.text[offset : offset + len(citation.quote)] != citation.quote
+            or (fresh.chunk.page_start, fresh.chunk.page_end)
+            != (citation.page_start, citation.page_end)
+        ):
+            raise EvidenceIntegrityError("Answer citation no longer matches its canonical source.")
 
 
 class AnswerWorkflow:
@@ -144,27 +171,7 @@ class AnswerWorkflow:
 
     async def validate_answer(self, answer: GroundedAnswer) -> None:
         """Recheck stored or cached answers before releasing them to a caller."""
-        resolver = self.resolver()
-        answer = GroundedAnswer.model_validate(answer.model_dump())
-        for citation in answer.citations:
-            fresh = await resolver.resolve(
-                tenant_id=self.tenant_id,
-                manifest_id=citation.manifest_id,
-                chunk_id=citation.chunk_id,
-            )
-            offset = citation.start_char - fresh.chunk.normalized_start_char
-            if (
-                fresh.identity != citation.evidence_id
-                or fresh.document_id != citation.document_id
-                or fresh.document_version_id != citation.document_version_id
-                or offset < 0
-                or fresh.chunk.text[offset : offset + len(citation.quote)] != citation.quote
-                or (fresh.chunk.page_start, fresh.chunk.page_end)
-                != (citation.page_start, citation.page_end)
-            ):
-                raise EvidenceIntegrityError(
-                    "Answer citation no longer matches its canonical source."
-                )
+        await validate_current_answer(answer, self.tenant_id, self.resolver())
 
     async def _stage(self, name: str, state: AnswerState) -> AnswerState:
         request = AnswerRequest.model_validate(state["request"])

@@ -461,3 +461,6 @@ Learning is pending; no scale, latency, broad relevance or resume-readiness infe
 ## Slice 8.3 — Protected answer API (2026-09-05)
 
 Nine named workflow stages; at most 8 answer passages/citations, 6,000 prompt/schema bytes, 5 run executions and 180 seconds per execution. 12 focused tests passed; final PG/Qdrant/Neo4j suite after review fixes: 373 passed, 4 opt-in skips, 1 known local-Qdrant warning in 20.98s; real Ollama passed separately in the prior full run. Ruff/mypy checked 133 files. These are development-proof counts, not production throughput/latency or answer-quality claims. Learning remains pending.
+## Slice 9.1 — Durable conversations (2026-09-05)
+
+50 conversations maximum per list response; 200 immutable messages maximum per conversation; 4 concurrent-order proof messages; 8 focused tests; final service suite 375 passed/4 opt-in skips/1 known local-Qdrant warning in21.96s; Ruff/mypy136 files. Development proof only—no production concurrency or storage-retention scale claim. Learning pending.

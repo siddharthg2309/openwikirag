@@ -325,3 +325,6 @@ A fresh real PostgreSQL connection resumed a failed generation stage under a non
 `POST /api/v1/answers` creates a pending run. `POST /api/v1/answers/{id}/execute` executes/resumes it; `/stream` emits stage progress then a validated final answer. GET and trace are owner-only. Answers are checksum-protected and canonical citations are revalidated on every read. SSE intentionally omits raw model tokens. A PostgreSQL advisory lock prevents simultaneous writers; disconnects leave recoverable state.
 
 Configure `OPENWIKIRAG_ANSWER_MODEL`, its expected digest and local base URL, then use the checkpoint setup CLI. Socket-level SSE load/disconnect behavior and broad content-table RLS are not claimed.
+### Phase 9.1: private durable conversations
+
+Conversation routes create/list/load tenant-and-user-private histories. Even a same-tenant admin cannot read another user's conversation. Answer requests may include `conversation_id`; the normalized question and final validated answer append atomically at immutable sequence numbers. Reads cap at 200 messages, verify checksums and revalidate assistant citations. PostgreSQL composite foreign keys enforce conversation/tenant/user lineage. History is context—not canonical enterprise knowledge.

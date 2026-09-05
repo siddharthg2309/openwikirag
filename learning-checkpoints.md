@@ -1751,3 +1751,17 @@ Evidence: 12 focused tests; final PG/Qdrant/Neo4j suite 373 passed/4 opt-in skip
 5. Explain the two-store consistency window and recovery tradeoff.
 
 Learner answers: pending.
+## Slice 9.1 — Owner-private conversations and ordered messages
+
+Status: unanswered; pause overridden through Phase 9.
+Objective/design: persist private multi-turn history, preserve deterministic ordering under concurrency, and link answer runs without turning history into authoritative knowledge.
+Flow/failures: owner check -> row lock -> capped sequence append/checksum -> commit. Assistant reads revalidate current citations. Foreign admins, corrupt lineage/checksum, stale citations and overflow fail closed.
+Evidence: 8 focused tests; full suite 375 passed/4 skips; static/migration checks. Q&A pending.
+
+1. Why is conversation ownership narrower than tenant RBAC?
+2. Trace user and assistant appends across run creation, retry and completion.
+3. How do row locking, unique sequence and composite owner FKs prevent different corruption classes?
+4. Why must stored assistant citations be revalidated, and why is chat history not enterprise truth?
+5. Explain the 200-message hard bound versus pagination/summarization alternatives.
+
+Learner answers: pending.

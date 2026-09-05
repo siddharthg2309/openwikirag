@@ -123,6 +123,21 @@ class AnswerRunService:
         spec = request.search(self.tenant_id)
         pack_context(tenant_id=self.tenant_id, query=spec.normalized_query, evidence=())
         run_id = uuid4()
+        if request.conversation_id is not None:
+            from openwikirag.application.conversations import (
+                ConversationNotFoundError,
+                ConversationService,
+            )
+
+            conversations = ConversationService(self.session, self.principal)
+            try:
+                await conversations.append(
+                    request.conversation_id, "user", {"text": spec.normalized_query}
+                )
+            except ConversationNotFoundError as exc:
+                raise RunNotFoundError("Conversation is unavailable.") from exc
+            except ValueError as exc:
+                raise RunConflictError("Conversation cannot accept another message.") from exc
         self.session.add(
             AnswerRun(
                 id=run_id,
@@ -130,6 +145,7 @@ class AnswerRunService:
                 user_id=self.user_id,
                 request_json=request.model_dump(mode="json"),
                 provider_identity=self.workflow.generation.provider.identity,
+                conversation_id=request.conversation_id,
             )
         )
         await AuditRepository(self.session).record(
@@ -195,6 +211,12 @@ class AnswerRunService:
                     answer = await self.workflow.result(run_id)
                     await self.authorize()
                     payload = answer.model_dump(mode="json")
+                    if row.conversation_id is not None:
+                        from openwikirag.application.conversations import ConversationService
+
+                        await ConversationService(self.session, self.principal).append(
+                            row.conversation_id, "assistant", {"answer": payload}
+                        )
                     await self.session.execute(
                         update(AnswerRun)
                         .where(

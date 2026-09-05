@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     UniqueConstraint,
@@ -37,6 +38,12 @@ class AnswerRun(Base):
             name="ck_answer_runs_result",
         ),
         Index("ix_answer_runs_owner", "tenant_id", "user_id", "created_at"),
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id", "user_id"],
+            ["conversations.id", "conversations.tenant_id", "conversations.user_id"],
+            name="fk_answer_runs_conversation_owner",
+            ondelete="CASCADE",
+        ),
     )
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     tenant_id: Mapped[UUID] = mapped_column(
@@ -44,6 +51,11 @@ class AnswerRun(Base):
     )
     user_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        nullable=True,
+        index=True,
     )
     request_json: Mapped[dict[str, object]] = mapped_column(
         JSON().with_variant(JSONB(), "postgresql"), nullable=False
@@ -66,6 +78,65 @@ class AnswerRun(Base):
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
         onupdate=text("CURRENT_TIMESTAMP"),
+    )
+
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+    __table_args__ = (
+        CheckConstraint("status IN ('active','deleted')", name="ck_conversations_status"),
+        Index("ix_conversations_owner_updated", "tenant_id", "user_id", "updated_at"),
+        UniqueConstraint("id", "tenant_id", "user_id", name="uq_conversations_owner_identity"),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="active", server_default=text("'active'")
+    )
+    next_sequence: Mapped[int] = mapped_column(nullable=False, default=1, server_default=text("1"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class ConversationMessage(Base):
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        CheckConstraint("role IN ('user','assistant')", name="ck_conversation_messages_role"),
+        UniqueConstraint("conversation_id", "sequence", name="uq_conversation_message_sequence"),
+        Index("ix_conversation_messages_owner", "tenant_id", "user_id", "conversation_id"),
+        ForeignKeyConstraint(
+            ["conversation_id", "tenant_id", "user_id"],
+            ["conversations.id", "conversations.tenant_id", "conversations.user_id"],
+            name="fk_conversation_messages_owner",
+            ondelete="CASCADE",
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    tenant_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content_json: Mapped[dict[str, object]] = mapped_column(
+        JSON().with_variant(JSONB(), "postgresql"), nullable=False
+    )
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )
 
 
