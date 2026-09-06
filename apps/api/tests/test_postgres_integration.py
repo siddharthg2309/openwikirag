@@ -10,6 +10,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.app.dependencies import get_session
@@ -20,8 +21,15 @@ from openwikirag.infrastructure.database import (
     create_session_factory,
     set_tenant_context,
 )
-from openwikirag.infrastructure.models import AuditEvent, Membership
+from openwikirag.infrastructure.models import (
+    AuditEvent,
+    Document,
+    DocumentVersion,
+    IngestionJob,
+    Membership,
+)
 from openwikirag.infrastructure.repositories.audit import AuditRepository
+from openwikirag.infrastructure.repositories.documents import DocumentRepository
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
 from openwikirag.security.authentication import JWTAuthenticator
 from openwikirag.security.authorization import Role
@@ -163,3 +171,92 @@ async def test_postgres_rls_filters_memberships_and_audits_by_transaction_tenant
     assert {membership.tenant_id for membership in visible_memberships_b} == {tenant_b.id}
     assert {event.tenant_id for event in visible_audits_b} == {tenant_b.id}
     assert await repository.get_role_for_tenant(user.id, tenant_b.id) is Role.EDITOR
+
+
+async def test_postgres_rls_filters_document_intake_rows_and_rejects_foreign_writes(
+    postgres_session: AsyncSession,
+) -> None:
+    repository = IdentityRepository(postgres_session)
+    suffix = uuid4().hex
+    tenant_a = await repository.create_tenant(f"Document RLS A {suffix}")
+    tenant_b = await repository.create_tenant(f"Document RLS B {suffix}")
+    document_id = uuid4()
+    version_id = uuid4()
+    job_id = uuid4()
+
+    await set_tenant_context(postgres_session, tenant_a.id)
+    await DocumentRepository(postgres_session).create_document_version(
+        document_id=document_id,
+        version_id=version_id,
+        job_id=job_id,
+        tenant_id=tenant_a.id,
+        title="Tenant A source",
+        original_filename="source.txt",
+        sanitized_filename="source.txt",
+        source_type="text",
+        media_type="text/plain",
+        byte_size=4,
+        checksum_sha256="a" * 64,
+        source_object_key=f"tenants/{tenant_a.id}/source.txt",
+        request_id=None,
+    )
+    await postgres_session.commit()
+
+    await set_tenant_context(postgres_session, tenant_a.id)
+    assert (
+        await postgres_session.scalar(
+            select(Document.id).where(Document.id == document_id)
+        )
+        is not None
+    )
+    assert (
+        await postgres_session.scalar(
+            select(DocumentVersion.id).where(DocumentVersion.id == version_id)
+        )
+        is not None
+    )
+    assert (
+        await postgres_session.scalar(
+            select(IngestionJob.id).where(IngestionJob.id == job_id)
+        )
+        is not None
+    )
+
+    await set_tenant_context(postgres_session, tenant_b.id)
+    assert (
+        await postgres_session.scalar(
+            select(Document.id).where(Document.id == document_id)
+        )
+        is None
+    )
+    assert (
+        await postgres_session.scalar(
+            select(DocumentVersion.id).where(DocumentVersion.id == version_id)
+        )
+        is None
+    )
+    assert (
+        await postgres_session.scalar(
+            select(IngestionJob.id).where(IngestionJob.id == job_id)
+        )
+        is None
+    )
+
+    forged = Document(
+        id=uuid4(),
+        tenant_id=tenant_a.id,
+        title="forged",
+        source_type="text",
+    )
+    postgres_session.add(forged)
+    with pytest.raises(DBAPIError):
+        await postgres_session.flush()
+    await postgres_session.rollback()
+
+    await postgres_session.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+    assert (
+        await postgres_session.scalar(
+            select(Document.id).where(Document.id == document_id)
+        )
+        is None
+    )

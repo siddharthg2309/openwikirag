@@ -26,6 +26,7 @@ from openwikirag.core.tracing import (
     set_span_attribute,
     span_trace_fields,
 )
+from openwikirag.infrastructure.database import set_tenant_context
 from openwikirag.infrastructure.models import IngestionJob
 from openwikirag.infrastructure.repositories.jobs import (
     JobClaim,
@@ -303,6 +304,7 @@ class IngestionConsumerService:
             await self._dead_letter_then_ack(message, reason="MALFORMED_EVENT")
             return "dead_letter"
 
+        await set_tenant_context(self._session, event.tenant_id)
         claim = await self._jobs.claim(
             job_id=event.job_id,
             tenant_id=event.tenant_id,
@@ -350,7 +352,7 @@ class IngestionConsumerService:
         try:
             await self._handler.handle(job=claim.job, payload=event.payload)
         except RetryableJobError:
-            job = await self._refresh_claimed_job(claim.job)
+            job = await self._refresh_claimed_job(claim.job, tenant_id=event.tenant_id)
             await self._jobs.mark_retryable(
                 job,
                 error_code="INGESTION_RETRYABLE_FAILURE",
@@ -360,7 +362,7 @@ class IngestionConsumerService:
             await self._session.commit()
             return "retryable"
         except PermanentJobError:
-            job = await self._refresh_claimed_job(claim.job)
+            job = await self._refresh_claimed_job(claim.job, tenant_id=event.tenant_id)
             await self._jobs.mark_dead_letter(
                 job,
                 error_code="INGESTION_PERMANENT_FAILURE",
@@ -368,7 +370,7 @@ class IngestionConsumerService:
             await self._dead_letter_then_ack(message, reason="INGESTION_PERMANENT_FAILURE")
             return "dead_letter"
         except Exception:
-            job = await self._refresh_claimed_job(claim.job)
+            job = await self._refresh_claimed_job(claim.job, tenant_id=event.tenant_id)
             await self._jobs.mark_retryable(
                 job,
                 error_code="INGESTION_UNEXPECTED_FAILURE",
@@ -378,15 +380,16 @@ class IngestionConsumerService:
             await self._session.commit()
             return "retryable"
 
-        job = await self._refresh_claimed_job(claim.job)
+        job = await self._refresh_claimed_job(claim.job, tenant_id=event.tenant_id)
         await self._jobs.mark_succeeded(job)
         await self._session.commit()
         await self._acknowledge(message)
         return "succeeded"
 
-    async def _refresh_claimed_job(self, job: IngestionJob) -> IngestionJob:
+    async def _refresh_claimed_job(self, job: IngestionJob, *, tenant_id: UUID) -> IngestionJob:
         """Reload job state after a handler may have closed its transaction."""
 
+        await set_tenant_context(self._session, tenant_id)
         await self._session.refresh(job)
         return job
 

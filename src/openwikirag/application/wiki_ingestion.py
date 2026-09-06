@@ -1,6 +1,7 @@
 """Durable worker orchestration for the WikiRAG pipeline."""
 
 import asyncio
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,6 +51,7 @@ from openwikirag.application.wiki_page_artifacts import (
     WikiPageArtifactService,
     WikiPageArtifactStorageError,
 )
+from openwikirag.infrastructure.database import set_tenant_context
 from openwikirag.infrastructure.models import IngestionJob
 from openwikirag.infrastructure.storage import ObjectStorage
 
@@ -98,18 +100,19 @@ class WikiIngestionHandler:
         """Run only the claimed job's canonical version; ignore payload ids."""
 
         del payload
-        job.current_step = "normalize"
-        await self._session.flush()
+        # Capture lineage before any stage can roll back and expire ORM state.
+        tenant_id = job.tenant_id
+        document_version_id = job.document_version_id
+        await self._set_job_step(job, tenant_id=tenant_id, step="normalize")
         try:
             normalized = await self._normalized.persist(
-                tenant_id=job.tenant_id,
-                document_version_id=job.document_version_id,
+                tenant_id=tenant_id,
+                document_version_id=document_version_id,
             )
         except Exception as exc:
             raise _map_normalization_error(exc) from exc
 
-        job.current_step = "metadata"
-        await self._session.flush()
+        await self._set_job_step(job, tenant_id=tenant_id, step="metadata")
         try:
             metadata = self._metadata.extract(
                 document=normalized.normalized_document,
@@ -122,8 +125,7 @@ class WikiIngestionHandler:
             await self._session.rollback()
             raise PermanentJobError("The document metadata cannot produce a WikiRAG page.") from exc
 
-        job.current_step = "generate"
-        await self._session.flush()
+        await self._set_job_step(job, tenant_id=tenant_id, step="generate")
         try:
             generation_result = await asyncio.to_thread(
                 self._generator.generate,
@@ -139,8 +141,8 @@ class WikiIngestionHandler:
 
         try:
             generation = await self._generation_artifacts.persist(
-                tenant_id=job.tenant_id,
-                document_version_id=job.document_version_id,
+                tenant_id=tenant_id,
+                document_version_id=document_version_id,
                 normalized_artifact_id=normalized.artifact_id,
                 result=generation_result,
             )
@@ -152,12 +154,11 @@ class WikiIngestionHandler:
             await self._session.rollback()
             raise PermanentJobError("The WikiRAG generation artifact is invalid.") from exc
 
-        job.current_step = "page_artifact"
-        await self._session.flush()
+        await self._set_job_step(job, tenant_id=tenant_id, step="page_artifact")
         try:
             await self._page_artifacts.persist(
-                tenant_id=job.tenant_id,
-                document_version_id=job.document_version_id,
+                tenant_id=tenant_id,
+                document_version_id=document_version_id,
                 normalized_artifact_id=normalized.artifact_id,
                 generation_artifact_id=generation.artifact_id,
                 page=page,
@@ -172,13 +173,12 @@ class WikiIngestionHandler:
             await self._session.rollback()
             raise PermanentJobError("The WikiRAG page artifact is invalid.") from exc
 
-        job.current_step = "index_vectors"
-        await self._session.flush()
+        await self._set_job_step(job, tenant_id=tenant_id, step="index_vectors")
         try:
             projection = await self._vector_ingestion.project(
-                tenant_id=job.tenant_id,
+                tenant_id=tenant_id,
                 document_id=normalized.document_id,
-                document_version_id=job.document_version_id,
+                document_version_id=document_version_id,
                 normalized_artifact_id=normalized.artifact_id,
                 document=normalized.normalized_document,
                 metadata=metadata,
@@ -191,17 +191,25 @@ class WikiIngestionHandler:
             raise PermanentJobError("The vector projection is invalid.") from exc
 
         # Reused manifest persistence may rollback and expire ORM attributes.
+        await set_tenant_context(self._session, tenant_id)
         await self._session.refresh(job)
         job.current_step = "knowledge_artifact"
         try:
             artifact = await KnowledgeArtifactService(self._session, self._storage).build(
-                tenant_id=job.tenant_id, manifest_id=projection.manifest_artifact_id,
+                tenant_id=tenant_id, manifest_id=projection.manifest_artifact_id,
             )
             if self._graph is not None:
                 await self._graph.upsert(artifact)
         except (KnowledgeError, GraphProjectionError) as exc:
             await self._session.rollback()
             raise RetryableJobError("Canonical graph construction will be retried.") from exc
+
+    async def _set_job_step(self, job: IngestionJob, *, tenant_id: UUID, step: str) -> None:
+        """Restore transaction-local RLS context before recording progress."""
+
+        await set_tenant_context(self._session, tenant_id)
+        job.current_step = step
+        await self._session.flush()
 
 
 def _map_normalization_error(error: Exception) -> Exception:
