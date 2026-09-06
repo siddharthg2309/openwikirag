@@ -1,4 +1,4 @@
-"""ASGI boundary for distributed throttling of unauthenticated auth routes."""
+"""ASGI boundaries for distributed API request throttling."""
 
 from collections.abc import Sequence
 from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address
@@ -95,22 +95,33 @@ def _with_headers(message: Message, headers: dict[str, str]) -> Message:
     return {**message, "headers": existing}
 
 
-async def _send_failure(scope: Scope, receive: Receive, send: Send, *, status: int) -> None:
+async def _send_failure(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    *,
+    status: int,
+    exceeded_message: str,
+    unavailable_message: str,
+) -> None:
     if status == 429:
         response = PlainTextResponse(
-            "Authentication rate limit exceeded.",
+            exceeded_message,
             status_code=status,
         )
     else:
         response = PlainTextResponse(
-            "Authentication rate limiting is temporarily unavailable.",
+            unavailable_message,
             status_code=status,
         )
     await response(scope, receive, send)
 
 
-class AuthRateLimitMiddleware:
-    """Apply one optional distributed quota before auth request parsing."""
+class _RateLimitMiddleware:
+    """Apply one optional distributed quota to a route subset."""
+
+    _exceeded_message = "Rate limit exceeded."
+    _unavailable_message = "Rate limiting is temporarily unavailable."
 
     def __init__(
         self,
@@ -129,22 +140,28 @@ class AuthRateLimitMiddleware:
         self._window_seconds = window_seconds
         self._trusted_proxy_networks = tuple(trusted_proxy_networks)
 
+    def _target_route(self, scope: Scope) -> str | None:
+        del scope
+        return None
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if (
-            scope.get("type") != "http"
-            or self._limiter is None
-            or scope.get("method") != "POST"
-            or scope.get("path") not in _AUTH_ROUTES
-        ):
+        route = self._target_route(scope)
+        if self._limiter is None or route is None:
             await self.app(scope, receive, send)
             return
 
         peer = _client_identity(scope, self._trusted_proxy_networks)
         if peer is None:
-            await _send_failure(scope, receive, send, status=503)
+            await _send_failure(
+                scope,
+                receive,
+                send,
+                status=503,
+                exceeded_message=self._exceeded_message,
+                unavailable_message=self._unavailable_message,
+            )
             return
 
-        route = str(scope["path"])
         try:
             decision = await self._limiter.check(
                 route=route,
@@ -153,7 +170,14 @@ class AuthRateLimitMiddleware:
                 window_seconds=self._window_seconds,
             )
         except RateLimitUnavailable:
-            await _send_failure(scope, receive, send, status=503)
+            await _send_failure(
+                scope,
+                receive,
+                send,
+                status=503,
+                exceeded_message=self._exceeded_message,
+                unavailable_message=self._unavailable_message,
+            )
             return
 
         headers = _quota_headers(
@@ -164,7 +188,7 @@ class AuthRateLimitMiddleware:
         if not decision.allowed:
             headers["Retry-After"] = str(decision.retry_after_seconds)
             response = PlainTextResponse(
-                "Authentication rate limit exceeded.",
+                self._exceeded_message,
                 status_code=429,
                 headers=headers,
             )
@@ -177,3 +201,37 @@ class AuthRateLimitMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_quota)
+
+
+class AuthRateLimitMiddleware(_RateLimitMiddleware):
+    """Apply one optional distributed quota before auth request parsing."""
+
+    _exceeded_message = "Authentication rate limit exceeded."
+    _unavailable_message = "Authentication rate limiting is temporarily unavailable."
+
+    def _target_route(self, scope: Scope) -> str | None:
+        if (
+            scope.get("type") != "http"
+            or scope.get("method") != "POST"
+            or scope.get("path") not in _AUTH_ROUTES
+        ):
+            return None
+        return str(scope["path"])
+
+
+class ApiRateLimitMiddleware(_RateLimitMiddleware):
+    """Apply one optional distributed quota to non-authentication API routes."""
+
+    _exceeded_message = "API rate limit exceeded."
+    _unavailable_message = "API rate limiting is temporarily unavailable."
+
+    def _target_route(self, scope: Scope) -> str | None:
+        path = scope.get("path")
+        if (
+            scope.get("type") != "http"
+            or not isinstance(path, str)
+            or not path.startswith("/api/v1/")
+            or path in _AUTH_ROUTES
+        ):
+            return None
+        return path

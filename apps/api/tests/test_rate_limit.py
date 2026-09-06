@@ -7,7 +7,7 @@ import pytest
 from redis.exceptions import RedisError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from apps.api.app.rate_limit import AuthRateLimitMiddleware
+from apps.api.app.rate_limit import ApiRateLimitMiddleware, AuthRateLimitMiddleware
 from openwikirag.core.config import Settings
 from openwikirag.security.rate_limit import (
     RateLimitUnavailable,
@@ -53,7 +53,7 @@ def _scope(
 
 
 async def _run(
-    middleware: AuthRateLimitMiddleware,
+    middleware: ASGIApp,
     scope: Scope,
 ) -> list[Message]:
     messages: list[Message] = []
@@ -337,3 +337,72 @@ async def test_malformed_redis_result_is_unavailable() -> None:
             limit=1,
             window_seconds=60,
         )
+
+
+@pytest.mark.asyncio
+async def test_business_api_routes_are_limited_before_downstream_application() -> None:
+    redis = FakeRedis(ttl=8)
+    calls: list[int] = []
+    middleware = ApiRateLimitMiddleware(
+        _application(calls),
+        limiter=RedisFixedWindowLimiter(redis),
+        limit=1,
+        window_seconds=60,
+    )
+
+    first = await _run(middleware, _scope(path="/api/v1/documents", method="GET"))
+    second = await _run(middleware, _scope(path="/api/v1/documents", method="GET"))
+
+    assert _response_status(first) == 200
+    assert _response_headers(first)[b"x-ratelimit-remaining"] == b"0"
+    assert _response_status(second) == 429
+    assert _response_headers(second)[b"retry-after"] == b"8"
+    assert second[1]["body"] == b"API rate limit exceeded."
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_business_quota_isolated_by_route_and_skips_auth_health() -> None:
+    redis = FakeRedis()
+    middleware = ApiRateLimitMiddleware(
+        _application([]),
+        limiter=RedisFixedWindowLimiter(redis),
+        limit=1,
+        window_seconds=60,
+    )
+
+    await _run(middleware, _scope(path="/api/v1/documents", method="GET"))
+    await _run(middleware, _scope(path="/api/v1/search", method="GET"))
+    await _run(middleware, _scope(path="/api/v1/auth/token", method="POST"))
+    await _run(middleware, _scope(path="/healthz", method="GET"))
+
+    assert len(redis.counts) == 2
+
+
+@pytest.mark.asyncio
+async def test_business_quota_store_failure_and_missing_peer_fail_closed() -> None:
+    failure_middleware = ApiRateLimitMiddleware(
+        _application([]),
+        limiter=RedisFixedWindowLimiter(FakeRedis(failure=RedisError("connection refused"))),
+        limit=10,
+        window_seconds=60,
+    )
+    missing_peer_middleware = ApiRateLimitMiddleware(
+        _application([]),
+        limiter=RedisFixedWindowLimiter(FakeRedis()),
+        limit=10,
+        window_seconds=60,
+    )
+
+    failure = await _run(
+        failure_middleware,
+        _scope(path="/api/v1/search", method="GET"),
+    )
+    missing_peer = await _run(
+        missing_peer_middleware,
+        _scope(path="/api/v1/search", method="GET", client=None),
+    )
+
+    assert _response_status(failure) == 503
+    assert failure[1]["body"] == b"API rate limiting is temporarily unavailable."
+    assert _response_status(missing_peer) == 503

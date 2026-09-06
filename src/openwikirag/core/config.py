@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     auth_rate_limit_enabled: bool = False
     auth_rate_limit_requests: int = Field(default=10, ge=1, le=10_000)
     auth_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3_600)
+    api_rate_limit_enabled: bool = False
+    api_rate_limit_requests: int = Field(default=60, ge=1, le=100_000)
+    api_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3_600)
     trusted_proxy_cidrs: str = ""
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
     qdrant_url: str = Field(default="http://127.0.0.1:6333", min_length=1)

@@ -23,7 +23,7 @@ from .dependencies import get_current_principal, get_session
 from .document_routes import router as document_router
 from .job_routes import router as job_router
 from .observability import RequestContextMiddleware
-from .rate_limit import AuthRateLimitMiddleware
+from .rate_limit import ApiRateLimitMiddleware, AuthRateLimitMiddleware
 from .request_limits import RequestSizeLimitMiddleware
 from .search_routes import router as search_router
 from .wiki_routes import router as wiki_router
@@ -50,11 +50,23 @@ auth_rate_limiter = (
     if settings.auth_rate_limit_enabled
     else None
 )
+api_rate_limiter = (
+    RedisFixedWindowLimiter.from_url(settings.redis_url)
+    if settings.api_rate_limit_enabled
+    else None
+)
 app.add_middleware(
     AuthRateLimitMiddleware,
     limiter=auth_rate_limiter,
     limit=settings.auth_rate_limit_requests,
     window_seconds=settings.auth_rate_limit_window_seconds,
+    trusted_proxy_networks=settings.trusted_proxy_networks,
+)
+app.add_middleware(
+    ApiRateLimitMiddleware,
+    limiter=api_rate_limiter,
+    limit=settings.api_rate_limit_requests,
+    window_seconds=settings.api_rate_limit_window_seconds,
     trusted_proxy_networks=settings.trusted_proxy_networks,
 )
 app.add_middleware(RequestSizeLimitMiddleware, max_request_bytes=settings.max_request_bytes)
