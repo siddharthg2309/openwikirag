@@ -1,7 +1,6 @@
 import argparse
 import asyncio
 import signal
-from pathlib import Path
 
 import structlog
 
@@ -43,7 +42,7 @@ from openwikirag.infrastructure.embedding_factory import (
 )
 from openwikirag.infrastructure.neo4j import Neo4jProjection
 from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
-from openwikirag.infrastructure.storage import LocalObjectStorage
+from openwikirag.infrastructure.storage import build_object_storage
 from openwikirag.infrastructure.streams import RedisStreamPublisher
 from openwikirag.infrastructure.wiki_ollama import OllamaWikiProvider
 
@@ -100,7 +99,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
     engine = create_database_engine(settings.database_url)
     session_factory = create_session_factory(engine)
     transport = RedisStreamPublisher.from_url(settings.redis_url)
-    storage = LocalObjectStorage(Path(settings.object_store_root))
+    storage = build_object_storage(settings)
     extractors = build_extractor_registry(settings)
     wiki_provider = build_wiki_generation_provider(settings)
     dense_config = build_dense_embedding_config(settings)

@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-from pathlib import Path
 from uuid import UUID
 
 from openwikirag.application.vector_index import VectorCollectionConfig
@@ -19,7 +18,7 @@ from openwikirag.infrastructure.embedding_factory import (
     build_dense_embedding_provider,
 )
 from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
-from openwikirag.infrastructure.storage import LocalObjectStorage
+from openwikirag.infrastructure.storage import build_object_storage
 
 
 async def run(tenant_id: UUID) -> int:
@@ -36,7 +35,7 @@ async def run(tenant_id: UUID) -> int:
         settings,
         config=QdrantCollectionConfig(vector=vector_config.collection),
     )
-    storage = LocalObjectStorage(Path(settings.object_store_root))
+    storage = build_object_storage(settings)
     try:
         await index.ensure_schema()
         async with create_session_factory(engine)() as session:

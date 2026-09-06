@@ -91,6 +91,18 @@ def test_clean_smoke_operator_isolates_and_cleans_one_prefixed_project() -> None
     assert "docker compose down" not in script
 
 
+def test_s3_smoke_mode_starts_minio_and_uses_container_dns() -> None:
+    script = (ROOT / "ops/smoke_compose.sh").read_text()
+
+    assert 'storage_backend=${OPENWIKIRAG_SMOKE_OBJECT_STORAGE_BACKEND:-filesystem}' in script
+    assert "services+=(minio)" in script
+    assert "OPENWIKIRAG_OBJECT_STORAGE_BACKEND=s3" in script
+    assert "OPENWIKIRAG_OBJECT_STORE_ENDPOINT_URL=http://minio:9000" in script
+    assert "/minio/health/live" in script
+    assert "OPENWIKIRAG_OBJECT_STORE_SECRET_ACCESS_KEY" in script
+    assert "OPENWIKIRAG_MINIO_API_PORT" in script
+
+
 def test_native_ocr_smoke_isolated_from_network_and_repository_writes() -> None:
     script = (ROOT / "ops/smoke_ocr.sh").read_text()
     fixture = (ROOT / "ops/ocr_native_smoke.py").read_text()
@@ -107,3 +119,14 @@ def test_native_ocr_smoke_isolated_from_network_and_repository_writes() -> None:
     assert "span.kind == \"ocr\"" in fixture
     assert "EXPECTED_FIXTURES" in fixture
     assert "fixture_count=" in fixture
+
+
+def test_s3_storage_smoke_is_redacted_and_cleans_up() -> None:
+    script = (ROOT / "ops/s3_storage_smoke.py").read_text()
+
+    assert "S3ObjectStorage" in script
+    assert "SMOKE_BYTES" in script
+    assert "sha256" in script
+    assert "await storage.delete" in script
+    assert "s3_storage_smoke_passed " in script
+    assert "OPENWIKIRAG_OBJECT_STORE_SECRET_ACCESS_KEY" in script

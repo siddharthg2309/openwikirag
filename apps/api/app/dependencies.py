@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
@@ -16,7 +15,7 @@ from openwikirag.infrastructure.database import (
     set_tenant_context,
 )
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
-from openwikirag.infrastructure.storage import LocalObjectStorage, ObjectStorage
+from openwikirag.infrastructure.storage import ObjectStorage, build_object_storage
 from openwikirag.security.authentication import (
     AccessTokenProvider,
     InvalidAccessTokenError,
@@ -52,7 +51,7 @@ def build_authenticator(current_settings: Settings = settings) -> AccessTokenPro
 
 
 authenticator = build_authenticator()
-object_storage = LocalObjectStorage(Path(settings.object_store_root))
+object_storage = build_object_storage(settings)
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

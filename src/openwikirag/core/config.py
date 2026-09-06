@@ -50,7 +50,14 @@ class Settings(BaseSettings):
     oidc_jwks_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     access_token_ttl_seconds: int = Field(default=900, ge=60, le=3600)
     refresh_token_ttl_days: int = Field(default=30, ge=1, le=90)
+    object_storage_backend: Literal["filesystem", "s3"] = "filesystem"
     object_store_root: str = Field(default=".data/objects", min_length=1)
+    object_store_bucket: str = Field(default="openwikirag", min_length=1, max_length=63)
+    object_store_endpoint_url: str = ""
+    object_store_region: str = Field(default="us-east-1", min_length=1, max_length=64)
+    object_store_access_key_id: str = ""
+    object_store_secret_access_key: str = ""
+    object_store_path_style: bool = True
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1, le=250 * 1024 * 1024)
     max_request_bytes: int = Field(default=32 * 1024 * 1024, ge=1, le=300 * 1024 * 1024)
     auth_rate_limit_enabled: bool = False
@@ -103,6 +110,19 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Dense embedding model and expected digest must be configured together."
             )
+        if bool(self.object_store_access_key_id.strip()) != bool(
+            self.object_store_secret_access_key.strip()
+        ):
+            raise ValueError(
+                "Object-storage access key and secret must be configured together."
+            )
+        if (
+            self.object_storage_backend == "s3"
+            and self.environment.casefold() in {"production", "prod"}
+            and self.object_store_endpoint_url.strip()
+            and not self.object_store_endpoint_url.startswith("https://")
+        ):
+            raise ValueError("Production S3 endpoint URL must use HTTPS.")
         try:
             _ = self.trusted_proxy_networks
         except ValueError as exc:

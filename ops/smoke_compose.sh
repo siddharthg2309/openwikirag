@@ -21,6 +21,20 @@ postgres_port=${OPENWIKIRAG_SMOKE_POSTGRES_PORT:-15432}
 redis_port=${OPENWIKIRAG_SMOKE_REDIS_PORT:-16381}
 qdrant_http_port=${OPENWIKIRAG_SMOKE_QDRANT_HTTP_PORT:-16333}
 qdrant_grpc_port=${OPENWIKIRAG_SMOKE_QDRANT_GRPC_PORT:-16334}
+storage_backend=${OPENWIKIRAG_SMOKE_OBJECT_STORAGE_BACKEND:-filesystem}
+minio_api_port=${OPENWIKIRAG_SMOKE_MINIO_API_PORT:-19000}
+minio_console_port=${OPENWIKIRAG_SMOKE_MINIO_CONSOLE_PORT:-19001}
+minio_bucket=${OPENWIKIRAG_SMOKE_OBJECT_STORE_BUCKET:-openwikirag-smoke}
+minio_access_key=${MINIO_ROOT_USER:-openwikirag}
+minio_secret_key=${MINIO_ROOT_PASSWORD:-openwikirag-dev-password}
+
+case "$storage_backend" in
+  filesystem|s3) ;;
+  *)
+    printf 'OPENWIKIRAG_SMOKE_OBJECT_STORAGE_BACKEND must be filesystem or s3.\n' >&2
+    exit 2
+    ;;
+esac
 
 validate_port() {
   local name=$1
@@ -36,12 +50,18 @@ validate_port OPENWIKIRAG_SMOKE_POSTGRES_PORT "$postgres_port"
 validate_port OPENWIKIRAG_SMOKE_REDIS_PORT "$redis_port"
 validate_port OPENWIKIRAG_SMOKE_QDRANT_HTTP_PORT "$qdrant_http_port"
 validate_port OPENWIKIRAG_SMOKE_QDRANT_GRPC_PORT "$qdrant_grpc_port"
+if [[ "$storage_backend" == "s3" ]]; then
+  validate_port OPENWIKIRAG_SMOKE_MINIO_API_PORT "$minio_api_port"
+  validate_port OPENWIKIRAG_SMOKE_MINIO_CONSOLE_PORT "$minio_console_port"
+fi
 
 export OPENWIKIRAG_API_PORT="$api_port"
 export OPENWIKIRAG_POSTGRES_PORT="$postgres_port"
 export OPENWIKIRAG_REDIS_PORT="$redis_port"
 export OPENWIKIRAG_QDRANT_HTTP_PORT="$qdrant_http_port"
 export OPENWIKIRAG_QDRANT_GRPC_PORT="$qdrant_grpc_port"
+export OPENWIKIRAG_MINIO_API_PORT="$minio_api_port"
+export OPENWIKIRAG_MINIO_CONSOLE_PORT="$minio_console_port"
 compose=(docker compose --project-name "$project_name")
 
 cleanup() {
@@ -66,15 +86,29 @@ wait_for_url() {
   return 1
 }
 
-"${compose[@]}" up --detach --build postgres redis qdrant
+services=(postgres redis qdrant)
+if [[ "$storage_backend" == "s3" ]]; then
+  export OPENWIKIRAG_OBJECT_STORAGE_BACKEND=s3
+  export OPENWIKIRAG_OBJECT_STORE_BUCKET="$minio_bucket"
+  export OPENWIKIRAG_OBJECT_STORE_ENDPOINT_URL=http://minio:9000
+  export OPENWIKIRAG_OBJECT_STORE_ACCESS_KEY_ID="$minio_access_key"
+  export OPENWIKIRAG_OBJECT_STORE_SECRET_ACCESS_KEY="$minio_secret_key"
+  export OPENWIKIRAG_OBJECT_STORE_PATH_STYLE=true
+  services+=(minio)
+fi
+
+"${compose[@]}" up --detach --build "${services[@]}"
 wait_for_url "http://127.0.0.1:${qdrant_http_port}/healthz" "Qdrant"
+if [[ "$storage_backend" == "s3" ]]; then
+  wait_for_url "http://127.0.0.1:${minio_api_port}/minio/health/live" "MinIO"
+fi
 "${compose[@]}" up --build migrate
 "${compose[@]}" up --detach api worker
 wait_for_url "http://127.0.0.1:${api_port}/healthz" "API liveness"
 
 for attempt in {1..30}; do
   if "${compose[@]}" logs --no-color worker 2>/dev/null | grep -q "worker_cycle_completed"; then
-    printf 'Compose smoke passed for project %s.\n' "$project_name"
+    printf 'Compose smoke passed for project %s (storage=%s).\n' "$project_name" "$storage_backend"
     exit 0
   fi
   sleep 1
