@@ -17,7 +17,7 @@ from openwikirag.application.embeddings import (
     validate_embedding_result,
 )
 
-OLLAMA_EMBEDDING_PROVIDER_VERSION = "ollama-embedding-api-v1"
+OLLAMA_EMBEDDING_PROVIDER_VERSION = "ollama-embedding-api-v2"
 MAX_EMBEDDING_RESPONSE_BYTES = 512 * 1024
 
 
@@ -182,7 +182,14 @@ def _parse_vector(
         raise EmbeddingOutputError("Ollama embedding dimensions do not match the request.")
     if any(type(value) not in {int, float} or not math.isfinite(float(value)) for value in vector):
         raise EmbeddingOutputError("Ollama embedding values must be finite numbers.")
-    return tuple(float(value) for value in vector)
+    raw_vector = tuple(float(value) for value in vector)
+    scale = max(abs(value) for value in raw_vector)
+    if scale == 0.0:
+        raise EmbeddingOutputError("Ollama embedding vector cannot have zero norm.")
+    scaled_norm = math.sqrt(math.fsum((value / scale) ** 2 for value in raw_vector))
+    if not math.isfinite(scaled_norm) or scaled_norm == 0.0:
+        raise EmbeddingOutputError("Ollama embedding vector norm is invalid.")
+    return tuple((value / scale) / scaled_norm for value in raw_vector)
 
 
 __all__ = [

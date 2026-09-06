@@ -9,7 +9,12 @@ from uuid import NAMESPACE_URL, uuid5
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from openwikirag.application.chunking import HierarchicalChunker
-from openwikirag.application.embeddings import DeterministicHashEmbeddingProvider, EmbeddingRequest
+from openwikirag.application.embeddings import (
+    DenseEmbeddingProvider,
+    DeterministicHashEmbeddingProvider,
+    EmbeddingConfig,
+    EmbeddingRequest,
+)
 from openwikirag.application.extraction import PlainTextExtractor
 from openwikirag.application.fusion import ReciprocalRankFusionService, RrfFusionConfig
 from openwikirag.application.metadata import DeterministicMetadataExtractor
@@ -24,7 +29,7 @@ from openwikirag.application.sparse import (
     DeterministicHashSparseEmbeddingProvider,
     SparseEmbeddingRequest,
 )
-from openwikirag.application.vector_index import VectorPointRequest
+from openwikirag.application.vector_index import VectorCollectionConfig, VectorPointRequest
 
 
 class JudgedQuery(BaseModel):
@@ -86,10 +91,17 @@ async def evaluate(
     *,
     k: int = 3,
     reranker: PairwiseReranker | None = None,
+    dense_provider: DenseEmbeddingProvider | None = None,
+    dense_config: EmbeddingConfig | None = None,
 ) -> dict[str, object]:
     dataset = EvaluationDataset.model_validate(dataset.model_dump())
     rank_metrics((), dataset.queries[0].grades, k=k)
-    config = CandidateRetrievalConfig()
+    resolved_dense_config = dense_config or EmbeddingConfig()
+    resolved_dense_provider = dense_provider or DeterministicHashEmbeddingProvider()
+    config = CandidateRetrievalConfig(
+        dense=resolved_dense_config,
+        collection=VectorCollectionConfig(dense_dimensions=resolved_dense_config.dimensions),
+    )
     tenant_id = uuid5(NAMESPACE_URL, "openwikirag:eval")
     points, labels, texts = [], {}, {}
     for label, text in sorted(dataset.documents.items()):
@@ -97,7 +109,7 @@ async def evaluate(
         chunk = HierarchicalChunker().chunk(document).chunks[0]
         if chunk.text != document.text:
             raise ValueError("Evaluation fixture must fit a single canonical parent chunk.")
-        dense = await DeterministicHashEmbeddingProvider().embed(
+        dense = await resolved_dense_provider.embed(
             EmbeddingRequest(
                 text=chunk.text,
                 input_checksum_sha256=chunk.content_checksum_sha256,
@@ -124,7 +136,11 @@ async def evaluate(
         ).build_point()
         points.append(point)
         labels[point.point_id], texts[point.point_id] = label, chunk.text
-    service = CandidateRetrievalService(InMemoryCandidateIndex(points), config=config)
+    service = CandidateRetrievalService(
+        InMemoryCandidateIndex(points),
+        config=config,
+        dense_provider=resolved_dense_provider,
+    )
     rows: list[dict[str, object]] = []
     totals: dict[str, list[dict[str, float]]] = {mode: [] for mode in ("dense", "sparse", "hybrid")}
     if reranker:
@@ -166,6 +182,7 @@ async def evaluate(
         "k": k,
         "candidate_window": len(points),
         "dense_model": config.dense.model_identity,
+        "dense_provider": resolved_dense_provider.provider_identity,
         "sparse_model": config.sparse.model_identity,
         "reranker": reranker.identity if reranker else None,
         "scope": "Authored development regression fixture; not held-out enterprise quality.",

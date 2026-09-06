@@ -97,6 +97,15 @@ async def test_provider_checks_identity_and_returns_unit_vector() -> None:
 
 
 @pytest.mark.anyio
+async def test_provider_normalizes_finite_non_unit_vector() -> None:
+    transport, _ = _transport(embeddings=((3.0, 4.0, 0.0),))
+
+    result = await _provider(transport).embed(_request())
+
+    assert result.vector == pytest.approx((0.6, 0.8, 0.0))
+
+
+@pytest.mark.anyio
 async def test_provider_rejects_digest_drift_after_embedding() -> None:
     transport, calls = _transport(drift_after_embed=True)
 
