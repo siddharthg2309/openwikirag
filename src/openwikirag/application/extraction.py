@@ -7,7 +7,7 @@ import zipfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from io import BytesIO
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 from xml.etree import ElementTree
 
 from pypdf import PdfReader
@@ -16,6 +16,7 @@ from pypdf.errors import PdfReadError
 from openwikirag.application.ocr import OcrPageResult
 
 NORMALIZED_DOCUMENT_SCHEMA_VERSION = "normalized-document-v1"
+MAX_NORMALIZED_DOCUMENT_BYTES = 64 * 1024 * 1024
 type PdfTextQualityStatus = Literal["sufficient", "partial", "empty"]
 
 
@@ -285,6 +286,78 @@ class NormalizedDocument:
         """Checksum the text, provenance, and parser identity together."""
 
         return hashlib.sha256(self.canonical_bytes()).hexdigest()
+
+
+def read_normalized_document(data: bytes) -> NormalizedDocument:
+    """Read and verify one persisted normalized-document artifact."""
+
+    if not isinstance(data, bytes) or len(data) > MAX_NORMALIZED_DOCUMENT_BYTES:
+        raise InvalidProvenanceError("The normalized artifact exceeds the parsing limit.")
+    try:
+        raw = json.loads(data)
+        if (
+            not isinstance(raw, dict)
+            or raw.get("schema_version") != NORMALIZED_DOCUMENT_SCHEMA_VERSION
+        ):
+            raise ValueError("The normalized artifact schema is invalid.")
+        raw_spans = raw["spans"]
+        if not isinstance(raw_spans, list):
+            raise ValueError("The normalized artifact spans are invalid.")
+        span_values: list[SourceSpan] = []
+        for item in raw_spans:
+            if not isinstance(item, dict):
+                raise ValueError("The normalized artifact spans are invalid.")
+            span_data = dict(item)
+            span_data["section_path"] = _string_tuple(span_data.get("section_path"))
+            span_values.append(SourceSpan(**cast(Any, span_data)))
+        spans = tuple(span_values)
+        if len(spans) != len(raw_spans):
+            raise ValueError("The normalized artifact spans are invalid.")
+        quality_data = raw.get("quality")
+        if isinstance(quality_data, dict):
+            quality_data = dict(quality_data)
+            quality_data["reason_codes"] = _string_tuple(quality_data.get("reason_codes"))
+        quality = (
+            PdfTextQualityAssessment(**cast(Any, quality_data))
+            if quality_data is not None
+            else None
+        )
+        ocr_data = raw.get("ocr")
+        if isinstance(ocr_data, dict):
+            ocr_data = dict(ocr_data)
+            ocr_data["attempted_page_numbers"] = _int_tuple(
+                ocr_data.get("attempted_page_numbers")
+            )
+            ocr_data["recovered_page_numbers"] = _int_tuple(
+                ocr_data.get("recovered_page_numbers")
+            )
+        ocr = OcrMetadata(**cast(Any, ocr_data)) if ocr_data is not None else None
+        document = NormalizedDocument(
+            source_type=cast(str, raw["source_type"]),
+            parser_name=cast(str, raw["parser_name"]),
+            parser_version=cast(str, raw["parser_version"]),
+            text=cast(str, raw["text"]),
+            spans=spans,
+            quality=quality,
+            ocr=ocr,
+        )
+        if document.canonical_bytes() != data:
+            raise ValueError("The normalized artifact is not canonical.")
+        return document
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise InvalidProvenanceError("The normalized artifact is invalid.") from exc
+
+
+def _string_tuple(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("Expected a list of strings.")
+    return tuple(value)
+
+
+def _int_tuple(value: object) -> tuple[int, ...]:
+    if not isinstance(value, list) or any(type(item) is not int for item in value):
+        raise ValueError("Expected a list of integers.")
+    return tuple(value)
 
 
 class DocumentExtractor(Protocol):
