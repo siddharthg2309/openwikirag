@@ -105,3 +105,5 @@ def test_native_ocr_smoke_isolated_from_network_and_repository_writes() -> None:
     assert "TesseractOcrEngine" in fixture
     assert "/Image" in fixture
     assert "span.kind == \"ocr\"" in fixture
+    assert "EXPECTED_FIXTURES" in fixture
+    assert "fixture_count=" in fixture

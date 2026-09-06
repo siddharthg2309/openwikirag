@@ -15,6 +15,12 @@ from openwikirag.application.ocr import (
     TesseractOcrEngine,
 )
 
+EXPECTED_FIXTURES: tuple[tuple[str, str], ...] = (
+    ("heading", "OPENWIKI OCR"),
+    ("tenant", "TENANT SAFE"),
+    ("replay", "REDIS REPLAY 42"),
+)
+
 
 def _digital_pdf(text: str) -> bytes:
     content = f"BT /F1 42 Tf 72 62 Td ({text}) Tj ET\n".encode()
@@ -113,37 +119,47 @@ def _serialize_pdf(objects: tuple[bytes, ...]) -> bytes:
 
 
 def main() -> None:
-    expected = "OPENWIKI OCR"
-    pdf_data = _image_only_pdf(expected)
-    try:
-        PdfExtractor().extract(pdf_data)
-    except NoTextExtractedError:
-        pass
-    else:
-        raise AssertionError("The OCR fixture unexpectedly contains extractable PDF text.")
-    document = PdfExtractor(
+    extractor = PdfExtractor(
         ocr_fallback=PdfOcrFallback(
             renderer=PopplerPageRenderer(),
             engine=TesseractOcrEngine(),
             options=OcrOptions(dpi=300, timeout_seconds=15, max_pages=1),
         )
-    ).extract(pdf_data)
+    )
+    recovered_pages = 0
+    ocr_spans = 0
+    parser_identities: set[tuple[str, str]] = set()
+    for label, expected in EXPECTED_FIXTURES:
+        pdf_data = _image_only_pdf(expected)
+        try:
+            PdfExtractor().extract(pdf_data)
+        except NoTextExtractedError:
+            pass
+        else:
+            raise AssertionError(f"Fixture {label!r} unexpectedly contains PDF text.")
+        document = extractor.extract(pdf_data)
 
-    if document.quality is None or document.quality.status != "sufficient":
-        raise AssertionError(f"Unexpected OCR quality: {document.quality!r}")
-    if document.ocr is None or document.ocr.recovered_page_numbers != (1,):
-        raise AssertionError(f"Missing OCR provenance: {document.ocr!r}")
-    if not any(span.kind == "ocr" and span.page_number == 1 for span in document.spans):
-        raise AssertionError("Normalized document has no OCR page span.")
+        if document.quality is None or document.quality.status != "sufficient":
+            raise AssertionError(f"Fixture {label!r} has unexpected OCR quality.")
+        if document.ocr is None or document.ocr.recovered_page_numbers != (1,):
+            raise AssertionError(f"Fixture {label!r} is missing OCR provenance.")
+        if not any(span.kind == "ocr" and span.page_number == 1 for span in document.spans):
+            raise AssertionError(f"Fixture {label!r} has no OCR page span.")
 
-    observed = " ".join(document.text.upper().split())
-    for token in expected.split():
-        if token not in observed:
-            raise AssertionError(f"OCR output {observed!r} does not contain {token!r}.")
+        observed = " ".join(document.text.upper().split())
+        if any(token not in observed for token in expected.split()):
+            raise AssertionError(f"Fixture {label!r} did not recover all expected tokens.")
+        recovered_pages += len(document.ocr.recovered_page_numbers)
+        ocr_spans += sum(1 for span in document.spans if span.kind == "ocr")
+        parser_identities.add((document.parser_name, document.parser_version))
+
+    if len(parser_identities) != 1:
+        raise AssertionError("Native OCR fixtures produced inconsistent parser identities.")
+    parser_name, parser_version = next(iter(parser_identities))
     print(
         "native_ocr_smoke_passed "
-        f"parser={document.parser_name} version={document.parser_version} "
-        f"text={observed!r} bytes={len(pdf_data)}"
+        f"fixture_count={len(EXPECTED_FIXTURES)} recovered_pages={recovered_pages} "
+        f"ocr_spans={ocr_spans} parser={parser_name} version={parser_version}"
     )
 
 
