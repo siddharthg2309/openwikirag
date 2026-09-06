@@ -22,14 +22,18 @@ from openwikirag.infrastructure.database import (
     set_tenant_context,
 )
 from openwikirag.infrastructure.models import (
+    AnswerRun,
     AuditEvent,
     ChunkManifestArtifact,
+    Conversation,
+    ConversationMessage,
     Document,
     DocumentVersion,
     IngestionJob,
     KnowledgeArtifactRow,
     Membership,
     NormalizedDocumentArtifact,
+    UserMemory,
     WikiGenerationArtifact,
     WikiPageArtifact,
 )
@@ -409,5 +413,98 @@ async def test_postgres_rls_filters_derived_artifacts_and_rejects_foreign_writes
     for model, artifact_id in derived_rows:
         visible_id = await postgres_session.scalar(
             select(model.id).where(model.id == artifact_id)
+        )
+        assert visible_id is None
+
+
+async def test_postgres_rls_filters_private_rows_and_rejects_foreign_writes(
+    postgres_session: AsyncSession,
+) -> None:
+    repository = IdentityRepository(postgres_session)
+    suffix = uuid4().hex
+    tenant_a = await repository.create_tenant(f"Private RLS A {suffix}")
+    tenant_b = await repository.create_tenant(f"Private RLS B {suffix}")
+    owner = await repository.create_user(f"private-rls-{suffix}@example.com")
+    conversation_id = uuid4()
+    message_id = uuid4()
+    answer_run_id = uuid4()
+    memory_id = uuid4()
+
+    await set_tenant_context(postgres_session, tenant_a.id)
+    conversation = Conversation(
+        id=conversation_id,
+        tenant_id=tenant_a.id,
+        user_id=owner.id,
+        title="Private conversation",
+    )
+    postgres_session.add(conversation)
+    await postgres_session.flush()
+    postgres_session.add_all(
+        (
+            ConversationMessage(
+                id=message_id,
+                conversation_id=conversation_id,
+                tenant_id=tenant_a.id,
+                user_id=owner.id,
+                sequence=1,
+                role="user",
+                content_json={"text": "private"},
+                checksum="a" * 64,
+            ),
+            AnswerRun(
+                id=answer_run_id,
+                tenant_id=tenant_a.id,
+                user_id=owner.id,
+                conversation_id=conversation_id,
+                request_json={"query": "private"},
+                provider_identity="test-provider",
+            ),
+            UserMemory(
+                id=memory_id,
+                tenant_id=tenant_a.id,
+                user_id=owner.id,
+                memory_key="style",
+                memory_value="brief",
+            ),
+        )
+    )
+    await postgres_session.flush()
+    await postgres_session.commit()
+
+    private_rows = (
+        (Conversation, conversation_id),
+        (ConversationMessage, message_id),
+        (AnswerRun, answer_run_id),
+        (UserMemory, memory_id),
+    )
+    await set_tenant_context(postgres_session, tenant_a.id)
+    for model, private_id in private_rows:
+        visible_id = await postgres_session.scalar(
+            select(model.id).where(model.id == private_id)
+        )
+        assert visible_id == private_id
+
+    await set_tenant_context(postgres_session, tenant_b.id)
+    for model, private_id in private_rows:
+        visible_id = await postgres_session.scalar(
+            select(model.id).where(model.id == private_id)
+        )
+        assert visible_id is None
+
+    forged = Conversation(
+        id=uuid4(),
+        tenant_id=tenant_a.id,
+        user_id=owner.id,
+        title="forged",
+    )
+    postgres_session.add(forged)
+    with pytest.raises(DBAPIError):
+        await postgres_session.flush()
+    await postgres_session.rollback()
+
+    await postgres_session.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+    for model, private_id in private_rows:
+        visible_id = await postgres_session.scalar(
+            select(model.id).where(model.id == private_id)
         )
         assert visible_id is None

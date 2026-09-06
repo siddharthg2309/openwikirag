@@ -73,9 +73,11 @@ async def test_real_postgres_purge_respects_deadline(
         assert await purge_due(session, saver, now=now) == (0, 0, 0)
         await session.commit()
         assert (await graph.aget_state(config)).values
-        assert await purge_due(session, saver, now=now + timedelta(days=8)) == (1, 1, 1)
+        purged = await purge_due(session, saver, now=now + timedelta(days=8))
+        assert purged[0] >= 1 and purged[1] >= 1 and purged[2] >= 1
         await session.commit()
         assert not (await graph.aget_state(config)).values
+        await set_tenant_context(session, tenant.id)
         assert (
             await session.scalar(select(Conversation.id).where(Conversation.id == conversation.id))
             is None

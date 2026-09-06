@@ -7,7 +7,8 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy import delete, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openwikirag.infrastructure.models import AnswerRun, Conversation, UserMemory
+from openwikirag.infrastructure.database import set_tenant_context
+from openwikirag.infrastructure.models import AnswerRun, Conversation, Tenant, UserMemory
 
 
 async def purge_due(
@@ -19,6 +20,27 @@ async def purge_due(
 ) -> tuple[int, int, int]:
     if not 1 <= batch <= 500 or now.tzinfo is None:
         raise ValueError("Invalid purge controls.")
+
+    tenant_ids = tuple(await session.scalars(select(Tenant.id)))
+    conversation_count = memory_count = run_count = 0
+    for tenant_id in tenant_ids:
+        await set_tenant_context(session, tenant_id)
+        conversations_purged, memories_purged, runs_purged = await _purge_tenant(
+            session, saver, now=now, batch=batch
+        )
+        conversation_count += conversations_purged
+        memory_count += memories_purged
+        run_count += runs_purged
+    return conversation_count, memory_count, run_count
+
+
+async def _purge_tenant(
+    session: AsyncSession,
+    saver: BaseCheckpointSaver[Any],
+    *,
+    now: datetime,
+    batch: int,
+) -> tuple[int, int, int]:
     snapshots = (
         await session.scalars(
             select(AnswerRun)

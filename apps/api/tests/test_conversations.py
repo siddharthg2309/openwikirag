@@ -114,6 +114,7 @@ async def test_context_summary_respects_utf8_byte_boundary(
 
     assert len(summary.encode("utf-8")) <= 2_000
     assert summary.encode("utf-8").decode("utf-8") == summary
+    await set_tenant_context(postgres_session, tenant.id)
     stored = await postgres_session.get(Conversation, conversation.id)
     assert stored is not None
     assert stored.summary_text == summary
