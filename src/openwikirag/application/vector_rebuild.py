@@ -7,6 +7,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openwikirag.application.embeddings import DenseEmbeddingProvider
 from openwikirag.application.extraction import (
     InvalidProvenanceError,
     read_normalized_document,
@@ -50,6 +51,7 @@ async def rebuild_vector_projection(
     storage: ObjectStorage,
     vector_index: VectorIndex,
     config: VectorIngestionConfig | None = None,
+    dense_provider: DenseEmbeddingProvider | None = None,
 ) -> VectorProjectionRebuildResult:
     """Replay tenant-owned normalized artifacts in bounded UUID pages."""
 
@@ -61,6 +63,7 @@ async def rebuild_vector_projection(
         storage,
         vector_index,
         config=config,
+        dense_provider=dense_provider,
     )
     metadata_extractor = DeterministicMetadataExtractor()
     cursor: UUID | None = None

@@ -4,6 +4,7 @@ import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openwikirag.application.embeddings import DenseEmbeddingProvider
 from openwikirag.application.extraction import (
     DEFAULT_EXTRACTOR_REGISTRY,
     ExtractionError,
@@ -65,6 +66,7 @@ class WikiIngestionHandler:
         config_hash: str,
         vector_config: VectorIngestionConfig | None = None,
         provider: WikiGenerationProvider | None = None,
+        dense_provider: DenseEmbeddingProvider | None = None,
         extractors: ExtractorRegistry = DEFAULT_EXTRACTOR_REGISTRY,
         graph: GraphProjection | None = None,
     ) -> None:
@@ -89,6 +91,7 @@ class WikiIngestionHandler:
             storage,
             vector_index,
             config=vector_config,
+            dense_provider=dense_provider,
         )
 
     async def handle(self, *, job: IngestionJob, payload: dict[str, object]) -> None:

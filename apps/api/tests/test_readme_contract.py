@@ -17,5 +17,6 @@ def test_readme_contains_architecture_and_explicit_scope_boundaries() -> None:
     assert "Qdrant and Neo4j are rebuildable projections" in readme
     assert "Poppler" in readme and "Tesseract" in readme
     assert "optional Ollama JSON-schema adapter" in readme
+    assert "optional Ollama `/api/embed` adapter" in readme
     assert "implementation.md" not in readme
     assert "metrics.md" not in readme

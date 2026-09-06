@@ -5,6 +5,7 @@ import asyncio
 from pathlib import Path
 from uuid import UUID
 
+from openwikirag.application.vector_index import VectorCollectionConfig
 from openwikirag.application.vector_ingestion import VectorIngestionConfig
 from openwikirag.application.vector_rebuild import rebuild_vector_projection
 from openwikirag.core.config import get_settings
@@ -12,6 +13,10 @@ from openwikirag.infrastructure.database import (
     create_database_engine,
     create_session_factory,
     set_tenant_context,
+)
+from openwikirag.infrastructure.embedding_factory import (
+    build_dense_embedding_config,
+    build_dense_embedding_provider,
 )
 from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
 from openwikirag.infrastructure.storage import LocalObjectStorage
@@ -22,7 +27,11 @@ async def run(tenant_id: UUID) -> int:
 
     settings = get_settings()
     engine = create_database_engine(settings.database_url)
-    vector_config = VectorIngestionConfig()
+    dense_config = build_dense_embedding_config(settings)
+    vector_config = VectorIngestionConfig(
+        dense=dense_config,
+        collection=VectorCollectionConfig(dense_dimensions=dense_config.dimensions),
+    )
     index = QdrantVectorIndex.from_settings(
         settings,
         config=QdrantCollectionConfig(vector=vector_config.collection),
@@ -38,6 +47,7 @@ async def run(tenant_id: UUID) -> int:
                 storage=storage,
                 vector_index=index,
                 config=vector_config,
+                dense_provider=build_dense_embedding_provider(settings),
             )
         print(
             "Replayed "

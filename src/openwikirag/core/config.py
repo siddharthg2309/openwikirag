@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     wiki_generation_model_digest: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
     wiki_generation_base_url: str = Field(default="http://127.0.0.1:11434", min_length=1)
     wiki_generation_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
+    dense_embedding_model: str = Field(default="", max_length=255)
+    dense_embedding_model_digest: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
+    dense_embedding_base_url: str = Field(default="http://127.0.0.1:11434", min_length=1)
+    dense_embedding_dimensions: int = Field(default=128, ge=1, le=8192)
+    dense_embedding_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
     score_cache_enabled: bool = False
     retrieval_index_version: str = Field(
         default="hash-dense-sparse-v1", min_length=1, max_length=255
@@ -75,6 +80,10 @@ class Settings(BaseSettings):
         if bool(self.wiki_generation_model.strip()) != bool(self.wiki_generation_model_digest):
             raise ValueError(
                 "Wiki generation model and expected digest must be configured together."
+            )
+        if bool(self.dense_embedding_model.strip()) != bool(self.dense_embedding_model_digest):
+            raise ValueError(
+                "Dense embedding model and expected digest must be configured together."
             )
         return self
 

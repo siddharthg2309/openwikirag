@@ -17,6 +17,7 @@ from openwikirag.application.embeddings import (
     DeterministicHashEmbeddingProvider,
     EmbeddingConfig,
     EmbeddingError,
+    EmbeddingProviderError,
     EmbeddingRequest,
     validate_embedding_result,
 )
@@ -321,6 +322,8 @@ class CandidateRetrievalService:
                 request=embedding_request,
                 result=await self._dense_provider.embed(embedding_request),
             )
+        except EmbeddingProviderError as exc:
+            raise RetrievalProviderError("The dense query provider failed.") from exc
         except EmbeddingError as exc:
             raise RetrievalOutputError("The dense query output is incompatible.") from exc
         except Exception as exc:

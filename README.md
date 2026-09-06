@@ -138,6 +138,7 @@ source before being returned.
 | Async processing | Redis 7 Streams | Outbox relay, durable jobs, retries, and recovery |
 | Object storage | Filesystem-backed object-volume adapter | Raw uploads and canonical immutable artifacts in the current local deployment |
 | Vector search | Qdrant 1.14.1 | Dense and sparse tenant-filtered retrieval |
+| Dense embeddings | Deterministic hash baseline + optional Ollama `/api/embed` adapter | Server-owned model/digest and dimension checks; semantic quality requires a labeled evaluation |
 | Knowledge graph | Neo4j 5.26 | Relationship projection and bounded graph expansion |
 | Knowledge layer | WikiRAG artifacts and provenance contracts | Structured, reviewable document knowledge |
 | WikiRAG generation | Deterministic baseline + optional Ollama JSON-schema adapter | Server-owned model/digest checks with citation-evidence validation |

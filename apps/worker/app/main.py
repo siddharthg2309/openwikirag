@@ -24,6 +24,7 @@ from openwikirag.application.ocr import (
     TesseractOcrEngine,
 )
 from openwikirag.application.outbox import OutboxPublisherService
+from openwikirag.application.vector_index import VectorCollectionConfig
 from openwikirag.application.vector_ingestion import VectorIngestionConfig
 from openwikirag.application.wiki_generation import (
     DeterministicWikiProvider,
@@ -36,6 +37,10 @@ from openwikirag.core.config import Settings, get_settings
 from openwikirag.core.logging import configure_logging
 from openwikirag.core.tracing import configure_tracing
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
+from openwikirag.infrastructure.embedding_factory import (
+    build_dense_embedding_config,
+    build_dense_embedding_provider,
+)
 from openwikirag.infrastructure.neo4j import Neo4jProjection
 from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
 from openwikirag.infrastructure.storage import LocalObjectStorage
@@ -96,7 +101,12 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
     storage = LocalObjectStorage(Path(settings.object_store_root))
     extractors = build_extractor_registry(settings)
     wiki_provider = build_wiki_generation_provider(settings)
-    vector_config = VectorIngestionConfig()
+    dense_config = build_dense_embedding_config(settings)
+    vector_config = VectorIngestionConfig(
+        dense=dense_config,
+        collection=VectorCollectionConfig(dense_dimensions=dense_config.dimensions),
+    )
+    dense_provider = build_dense_embedding_provider(settings)
     graph = Neo4jProjection.from_settings(settings) if settings.graph_enabled else None
     vector_index = QdrantVectorIndex.from_settings(
         settings,
@@ -119,6 +129,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 config_hash=settings.wiki_generation_config_hash,
                 vector_config=vector_config,
                 provider=wiki_provider,
+                dense_provider=dense_provider,
                 extractors=extractors,
                 graph=graph,
             )
@@ -129,6 +140,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 config_hash=settings.wiki_regeneration_config_hash,
                 vector_config=vector_config,
                 provider=wiki_provider,
+                dense_provider=dense_provider,
                 extractors=extractors,
                 graph=graph,
             )

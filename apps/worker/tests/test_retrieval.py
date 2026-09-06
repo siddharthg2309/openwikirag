@@ -17,6 +17,7 @@ from openwikirag.application.embeddings import (
     DenseEmbedding,
     DeterministicHashEmbeddingProvider,
     EmbeddingConfig,
+    EmbeddingProviderError,
     EmbeddingRequest,
 )
 from openwikirag.application.retrieval import (
@@ -311,6 +312,27 @@ async def test_provider_failure_is_typed() -> None:
     )
 
     with pytest.raises(RetrievalProviderError):
+        await service.retrieve(
+            SearchRequest(tenant_id=TENANT_ID, query="identity", mode="dense")
+        )
+
+
+class TypedFailingDenseProvider:
+    provider_identity = "typed-failing-dense-v1"
+
+    async def embed(self, request: EmbeddingRequest) -> DenseEmbedding:
+        del request
+        raise EmbeddingProviderError("dependency unavailable")
+
+
+async def test_typed_embedding_dependency_failure_is_not_output_corruption() -> None:
+    service = CandidateRetrievalService(
+        InMemoryCandidateIndex(await _points()),
+        config=_config(),
+        dense_provider=TypedFailingDenseProvider(),
+    )
+
+    with pytest.raises(RetrievalProviderError, match="provider failed"):
         await service.retrieve(
             SearchRequest(tenant_id=TENANT_ID, query="identity", mode="dense")
         )

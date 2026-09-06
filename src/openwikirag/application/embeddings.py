@@ -33,6 +33,10 @@ class EmbeddingOutputError(EmbeddingError):
     """Raised when a provider result does not match its request contract."""
 
 
+class EmbeddingProviderError(EmbeddingError):
+    """Raised when an embedding dependency cannot complete a request."""
+
+
 @dataclass(frozen=True, slots=True)
 class EmbeddingConfig:
     """Server-owned identity and geometry for one dense embedding projection."""
@@ -153,7 +157,9 @@ class DenseEmbedding(BaseModel):
 class DenseEmbeddingProvider(Protocol):
     """Application-owned port implemented by local or remote dense providers."""
 
-    provider_identity: str
+    @property
+    def provider_identity(self) -> str:
+        """Return the stable provider/model identity."""
 
     async def embed(self, request: EmbeddingRequest) -> DenseEmbedding:
         """Create one validated dense embedding for the exact request text."""
@@ -235,6 +241,7 @@ __all__ = [
     "EmbeddingError",
     "EmbeddingInputError",
     "EmbeddingOutputError",
+    "EmbeddingProviderError",
     "EmbeddingRequest",
     "EMBEDDING_CONFIG_SCHEMA_VERSION",
     "EMBEDDING_SCHEMA_VERSION",
