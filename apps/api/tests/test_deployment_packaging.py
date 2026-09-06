@@ -130,3 +130,27 @@ def test_s3_storage_smoke_is_redacted_and_cleans_up() -> None:
     assert "await storage.delete" in script
     assert "s3_storage_smoke_passed " in script
     assert "OPENWIKIRAG_OBJECT_STORE_SECRET_ACCESS_KEY" in script
+
+
+def test_live_non_voice_demo_is_scoped_and_redacted() -> None:
+    wrapper = (ROOT / "ops/demo_non_voice.sh").read_text()
+    driver = (ROOT / "ops/non_voice_demo.py").read_text()
+
+    assert "openwikirag-demo-" in wrapper
+    assert "OPENWIKIRAG_DEMO_API_PORT" in wrapper
+    assert "OPENWIKIRAG_ENVIRONMENT=development" in wrapper
+    assert "OPENWIKIRAG_OBJECT_STORAGE_BACKEND=filesystem" in wrapper
+    assert "docker compose down" not in wrapper
+    assert "down --volumes --remove-orphans" in wrapper
+    assert "trap cleanup EXIT" in wrapper
+    for endpoint in (
+        "/api/v1/auth/register",
+        "/api/v1/auth/token",
+        "/api/v1/documents",
+        "/api/v1/jobs/",
+        "/api/v1/wiki/pages",
+        "/api/v1/search",
+    ):
+        assert endpoint in driver
+    assert "non_voice_live_demo_passed " in driver
+    assert "response.text" not in driver
