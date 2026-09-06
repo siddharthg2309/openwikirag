@@ -334,3 +334,14 @@ Conversation context uses up to six recent validated messages, capped at2,000 UT
 ### Phase9.3: scoped reranker score cache
 
 Enable OPENWIKIRAG_SCORE_CACHE_ENABLED with Redis and a configured reranker. Cache keys cover tenant/user/query/request filters/model identities/index version/history checksum and exact query-passage input. Numeric scores expire after300seconds. Current identity and canonical source validation still run. Bump OPENWIKIRAG_RETRIEVAL_INDEX_VERSION when index configuration changes. Redis stores scores, without source/context text; cache outage falls through to model scoring.
+
+### Phase 9 acceptance evidence
+
+Phase 9 is verified on local integration fixtures. Conversation summaries preserve
+valid UTF-8 within a 2,000-byte bound, explicit memory withdrawal invalidates saved
+context before inference and purges workflow checkpoints on deadline, and scoped
+reranker scores use Redis without storing source text. An opt-in integration test
+starts two separate Uvicorn processes and reads the same private conversation over
+HTTP before and after restart. See [the acceptance ledger](docs/PHASE_9_ACCEPTANCE.md)
+and [the learning checkpoints](learning-checkpoints.md); all quizzes were explicitly
+deferred by the learner and remain unanswered.

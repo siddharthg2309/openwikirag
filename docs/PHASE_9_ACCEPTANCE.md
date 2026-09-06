@@ -1,6 +1,6 @@
 # Phase 9 acceptance evidence
 
-Date: 2026-09-05. Audit in progress; this is not a full-project completion claim.
+Date: 2026-09-06. Phase 9 audit complete; this is not a full-project completion claim.
 
 | Requirement | Evidence | Status |
 | --- | --- | --- |
@@ -13,6 +13,6 @@ Date: 2026-09-05. Audit in progress; this is not a full-project completion claim
 | Scoped cache | test_score_cache.py key dimensions/Redis TTL; workflow reuse test | Verified |
 | Conversation resumes after API restart | opt-in test starts two Uvicorn processes and reads the same owner-scoped conversation over HTTP before/after restart | Verified |
 
-Latest regression: 384 passed, two optional model tests skipped; one known local-Qdrant warning. Strict typing passed for141 source files.
+Latest regression: 385 passed, three opt-in tests skipped (two model smokes and the process-restart probe in the default run), one known local-Qdrant warning, in 27.13 seconds. Strict typing passed with zero issues across 142 files. The process-restart probe was separately enabled and passed in 7.04 seconds.
 
 Pre-existing project limitations remain explicit: native OCR proof, live wiki-generation activation, semantic dense embeddings, free-text graph extraction and production deployment are not established by these Phase9 tests. Resume readiness still requires learner answers and measured production-quality evidence where claimed.

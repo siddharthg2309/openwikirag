@@ -6,7 +6,7 @@ import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import httpx
@@ -89,7 +89,7 @@ async def _get_conversation(port: int, token: str, conversation_id: str) -> dict
             if response.status_code != 200:
                 detail = response.text
                 raise AssertionError(f"conversation read failed: {response.status_code} {detail}")
-            return response.json()
+            return cast(dict[str, Any], response.json())
     raise AssertionError("API process did not become ready within six seconds")
 
 

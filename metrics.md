@@ -22,14 +22,18 @@ they are not evidence of production scale or universal security.
 
 ## Current verified snapshot
 
-Last updated: 2026-09-05
-Current verified slice: Phase 9, Slice 9.3 — Scoped reranker score caching.
-Latest full service-enabled run: 384 passed, 2 optional model skips, 1 known local-Qdrant
-warning in 23.51 seconds. PostgreSQL, Redis, Qdrant and Neo4j integrations enabled;
-141 source files passed strict typing. Older rows below are historical slice evidence.
+Last updated: 2026-09-06
+Current verified slice: Phase 9 final acceptance audit — Slice 9.5.
+Latest full service-enabled run: 385 passed, 3 opt-in skips (2 model smokes and 1
+process-restart probe), 1 known local-Qdrant warning in 27.13 seconds. PostgreSQL,
+Redis, Qdrant and Neo4j integrations enabled; strict typing passed with 0 issues
+across 142 files. Older rows below are historical slice evidence.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
+| Automated tests | Phase 9 final service-enabled suite | 385 passed, 3 opt-in skips, 1 known warning in 27.13s | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 OPENWIKIRAG_TEST_NEO4J_URI=bolt://127.0.0.1:27687 OPENWIKIRAG_TEST_REDIS_URL=redis://127.0.0.1:26379/0 uv run --no-sync pytest -o addopts='' -q` |
+| Integration | Conversation route after API process restart | 1 passed in 7.04s | verified | `OPENWIKIRAG_TEST_API_RESTART=1 ... uv run --no-sync pytest -o addopts='' -q apps/api/tests/test_api_process_restart.py` |
+| Static quality | Strict typing | 0 issues across 142 files | verified | `uv run --no-sync mypy src apps` |
 | Automated tests | Latest offline-only full run (Slice 6.4) | 301 passed, 5 skipped | historical verified | `uv run pytest` |
 | Automated tests | Current Qdrant-enabled full suite | 323 passed, 4 skipped | verified | `OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 uv run --no-sync pytest` |
 | Automated tests | PostgreSQL + Redis-enabled suite | 49 passed | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_REDIS_URL=... uv run pytest` |
@@ -473,3 +477,27 @@ Six recent messages;2,000 UTF-8 byte summary;seven-day retention deadline;purge 
 ## Slice9.3 — scoped cache proof
 
 2026-09-05:384tests passed with PG/Qdrant/Neo4j/Redis enabled;2real-model opt-in skips;1knownQdrantwarning;23.51s.141typedsourcefiles. Two identical workflow executions caused one reranker invocation in the fixture. Redis TTL300seconds maximum; payload read8193bytes maximum. This is a controlled repeated-input proof, not a production hit-rate or latency improvement measurement.
+
+## Slice 9.4 — UTF-8 context boundary proof
+
+2026-09-06: focused PostgreSQL summary-boundary test passed (`2 passed`). A
+multibyte conversation summary remained valid UTF-8, at most 2,000 encoded bytes,
+and matched its persisted SHA-256 checksum. This is a safety/integrity proof, not
+a semantic-summary quality measurement.
+
+## Slice 9.5 — API-process restart proof
+
+2026-09-06: opt-in two-process HTTP test passed (`1 passed in 7.04s`) against a
+fresh PostgreSQL database. Two separate Uvicorn processes returned the same
+owner-scoped conversation and ordered message after restart. This proves route
+recovery, not in-flight checkpoint recovery, production orchestration, load, or
+retention scheduling.
+
+## Phase 9 final verification — 2026-09-06
+
+Fresh PostgreSQL migrations 0001–0014 applied and `alembic check` reported no
+upgrade operations. PostgreSQL, Redis, Qdrant, and Neo4j service integrations were
+enabled for the full suite: 385 passed, 3 opt-in skips, 1 known local-Qdrant
+warning in 27.13 seconds. Ruff passed; mypy reported 0 issues across 142 files;
+`uv lock --check` passed. The default suite skips the process probe and two real
+model smokes; the process probe was separately run and passed above.
