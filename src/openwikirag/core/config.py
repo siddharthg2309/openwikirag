@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     refresh_token_ttl_days: int = Field(default=30, ge=1, le=90)
     object_store_root: str = Field(default=".data/objects", min_length=1)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1, le=250 * 1024 * 1024)
+    max_request_bytes: int = Field(default=32 * 1024 * 1024, ge=1, le=300 * 1024 * 1024)
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
     qdrant_url: str = Field(default="http://127.0.0.1:6333", min_length=1)
     qdrant_api_key: str | None = None
@@ -61,6 +62,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_reranker(self) -> Self:
+        if self.max_request_bytes < self.max_upload_bytes:
+            raise ValueError("The HTTP request bound must cover the decoded upload bound.")
         if bool(self.reranker_model.strip()) != bool(self.reranker_revision):
             raise ValueError("Reranker model and immutable revision must be configured together.")
         if bool(self.answer_model.strip()) != bool(self.answer_model_digest):

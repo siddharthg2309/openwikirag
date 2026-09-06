@@ -22,6 +22,7 @@ from .dependencies import get_current_principal, get_session
 from .document_routes import router as document_router
 from .job_routes import router as job_router
 from .observability import RequestContextMiddleware
+from .request_limits import RequestSizeLimitMiddleware
 from .search_routes import router as search_router
 from .wiki_routes import router as wiki_router
 
@@ -42,6 +43,7 @@ app.include_router(search_router)
 app.include_router(answer_router)
 app.include_router(conversation_router)
 app.include_router(memory_router)
+app.add_middleware(RequestSizeLimitMiddleware, max_request_bytes=settings.max_request_bytes)
 app.add_middleware(RequestContextMiddleware)
 
 
