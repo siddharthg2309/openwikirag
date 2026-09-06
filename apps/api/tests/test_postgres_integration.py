@@ -23,10 +23,15 @@ from openwikirag.infrastructure.database import (
 )
 from openwikirag.infrastructure.models import (
     AuditEvent,
+    ChunkManifestArtifact,
     Document,
     DocumentVersion,
     IngestionJob,
+    KnowledgeArtifactRow,
     Membership,
+    NormalizedDocumentArtifact,
+    WikiGenerationArtifact,
+    WikiPageArtifact,
 )
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.infrastructure.repositories.documents import DocumentRepository
@@ -229,6 +234,7 @@ async def test_postgres_rls_filters_document_intake_rows_and_rejects_foreign_wri
         )
         is None
     )
+
     assert (
         await postgres_session.scalar(
             select(DocumentVersion.id).where(DocumentVersion.id == version_id)
@@ -260,3 +266,148 @@ async def test_postgres_rls_filters_document_intake_rows_and_rejects_foreign_wri
         )
         is None
     )
+
+
+async def test_postgres_rls_filters_derived_artifacts_and_rejects_foreign_writes(
+    postgres_session: AsyncSession,
+) -> None:
+    repository = IdentityRepository(postgres_session)
+    suffix = uuid4().hex
+    tenant_a = await repository.create_tenant(f"Derived RLS A {suffix}")
+    tenant_b = await repository.create_tenant(f"Derived RLS B {suffix}")
+    document_id = uuid4()
+    version_id = uuid4()
+    job_id = uuid4()
+    normalized_id = uuid4()
+    manifest_id = uuid4()
+    generation_id = uuid4()
+    page_id = uuid4()
+    knowledge_id = uuid4()
+
+    await set_tenant_context(postgres_session, tenant_a.id)
+    await DocumentRepository(postgres_session).create_document_version(
+        document_id=document_id,
+        version_id=version_id,
+        job_id=job_id,
+        tenant_id=tenant_a.id,
+        title="Derived source",
+        original_filename="source.txt",
+        sanitized_filename="source.txt",
+        source_type="text",
+        media_type="text/plain",
+        byte_size=4,
+        checksum_sha256="a" * 64,
+        source_object_key=f"tenants/{tenant_a.id}/derived-source.txt",
+        request_id=None,
+    )
+    normalized = NormalizedDocumentArtifact(
+        id=normalized_id,
+        tenant_id=tenant_a.id,
+        document_version_id=version_id,
+        parser_name="text",
+        parser_version="v1",
+        content_checksum_sha256="b" * 64,
+        artifact_object_key=f"tenants/{tenant_a.id}/normalized.json",
+        character_count=1,
+        span_count=1,
+    )
+    manifest = ChunkManifestArtifact(
+        id=manifest_id,
+        tenant_id=tenant_a.id,
+        document_version_id=version_id,
+        normalized_artifact_id=normalized_id,
+        manifest_schema_version="chunk-manifest-v1",
+        source_artifact_checksum="b" * 64,
+        chunking_config_checksum="c" * 64,
+        manifest_checksum_sha256="d" * 64,
+        artifact_object_key=f"tenants/{tenant_a.id}/manifest.json",
+        chunk_count=1,
+        parent_count=1,
+        child_count=0,
+    )
+    generation = WikiGenerationArtifact(
+        id=generation_id,
+        tenant_id=tenant_a.id,
+        document_version_id=version_id,
+        normalized_artifact_id=normalized_id,
+        base_page_checksum="e" * 64,
+        source_artifact_checksum="b" * 64,
+        metadata_checksum="f" * 64,
+        prompt_checksum="1" * 64,
+        config_hash="2" * 64,
+        provider_identity="test-provider",
+        generation_version="wiki-generation-v1",
+        result_checksum_sha256="3" * 64,
+        artifact_object_key=f"tenants/{tenant_a.id}/generation.json",
+    )
+    page = WikiPageArtifact(
+        id=page_id,
+        tenant_id=tenant_a.id,
+        document_version_id=version_id,
+        normalized_artifact_id=normalized_id,
+        generation_artifact_id=generation_id,
+        page_checksum="e" * 64,
+        generation_result_checksum_sha256="3" * 64,
+        content_checksum_sha256="4" * 64,
+        artifact_object_key=f"tenants/{tenant_a.id}/page.json",
+    )
+    knowledge = KnowledgeArtifactRow(
+        id=knowledge_id,
+        tenant_id=tenant_a.id,
+        document_version_id=version_id,
+        manifest_id=manifest_id,
+        extractor="relations-v2",
+        checksum="5" * 64,
+        payload={"schema_version": "knowledge-v1"},
+    )
+    postgres_session.add(normalized)
+    await postgres_session.flush()
+    postgres_session.add_all((manifest, generation))
+    await postgres_session.flush()
+    postgres_session.add_all((page, knowledge))
+    await postgres_session.flush()
+    await postgres_session.commit()
+
+    derived_rows = (
+        (NormalizedDocumentArtifact, normalized_id),
+        (ChunkManifestArtifact, manifest_id),
+        (WikiGenerationArtifact, generation_id),
+        (WikiPageArtifact, page_id),
+        (KnowledgeArtifactRow, knowledge_id),
+    )
+    await set_tenant_context(postgres_session, tenant_a.id)
+    for model, artifact_id in derived_rows:
+        visible_id = await postgres_session.scalar(
+            select(model.id).where(model.id == artifact_id)
+        )
+        assert visible_id == artifact_id
+
+    await set_tenant_context(postgres_session, tenant_b.id)
+    for model, artifact_id in derived_rows:
+        visible_id = await postgres_session.scalar(
+            select(model.id).where(model.id == artifact_id)
+        )
+        assert visible_id is None
+
+    forged = NormalizedDocumentArtifact(
+        id=uuid4(),
+        tenant_id=tenant_a.id,
+        document_version_id=version_id,
+        parser_name="forged",
+        parser_version="v1",
+        content_checksum_sha256="6" * 64,
+        artifact_object_key=f"tenants/{tenant_a.id}/forged.json",
+        character_count=1,
+        span_count=1,
+    )
+    postgres_session.add(forged)
+    with pytest.raises(DBAPIError):
+        await postgres_session.flush()
+    await postgres_session.rollback()
+
+    await postgres_session.execute(text("SELECT set_config('app.tenant_id', '', true)"))
+    for model, artifact_id in derived_rows:
+        visible_id = await postgres_session.scalar(
+            select(model.id).where(model.id == artifact_id)
+        )
+        assert visible_id is None
