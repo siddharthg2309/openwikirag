@@ -55,6 +55,7 @@ app.add_middleware(
     limiter=auth_rate_limiter,
     limit=settings.auth_rate_limit_requests,
     window_seconds=settings.auth_rate_limit_window_seconds,
+    trusted_proxy_networks=settings.trusted_proxy_networks,
 )
 app.add_middleware(RequestSizeLimitMiddleware, max_request_bytes=settings.max_request_bytes)
 app.add_middleware(RequestContextMiddleware)

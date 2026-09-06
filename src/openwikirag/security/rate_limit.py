@@ -59,7 +59,7 @@ return {current, ttl}
 
 
 class RedisFixedWindowLimiter:
-    """Use one atomic Redis counter per route and direct peer per time window."""
+    """Use one atomic Redis counter per route and resolved peer per time window."""
 
     _key_prefix = "openwikirag:ratelimit:v1:auth:"
 

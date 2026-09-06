@@ -1,12 +1,14 @@
 """Distributed authentication-route throttling tests."""
 
 from collections import defaultdict
+from ipaddress import ip_network
 
 import pytest
 from redis.exceptions import RedisError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from apps.api.app.rate_limit import AuthRateLimitMiddleware
+from openwikirag.core.config import Settings
 from openwikirag.security.rate_limit import (
     RateLimitUnavailable,
     RedisFixedWindowLimiter,
@@ -170,6 +172,97 @@ async def test_forwarded_header_does_not_change_direct_peer_key() -> None:
 
     assert len(redis.counts) == 1
     assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_allowlisted_proxy_resolves_distinct_client_addresses() -> None:
+    redis = FakeRedis()
+    limiter = RedisFixedWindowLimiter(redis)
+    middleware = AuthRateLimitMiddleware(
+        _application([]),
+        limiter=limiter,
+        limit=10,
+        window_seconds=60,
+        trusted_proxy_networks=(ip_network("10.0.0.0/8"),),
+    )
+
+    await _run(
+        middleware,
+        _scope(
+            client=("10.10.10.10", 5000),
+            headers=[(b"x-forwarded-for", b"203.0.113.10")],
+        ),
+    )
+    await _run(
+        middleware,
+        _scope(
+            client=("10.10.10.10", 5000),
+            headers=[(b"x-forwarded-for", b"203.0.113.11")],
+        ),
+    )
+
+    assert len(redis.counts) == 2
+    assert limiter.key(route="/api/v1/auth/token", peer="203.0.113.10") in redis.counts
+    assert limiter.key(route="/api/v1/auth/token", peer="203.0.113.11") in redis.counts
+
+
+@pytest.mark.asyncio
+async def test_proxy_chain_uses_first_untrusted_hop_from_the_right() -> None:
+    redis = FakeRedis()
+    limiter = RedisFixedWindowLimiter(redis)
+    middleware = AuthRateLimitMiddleware(
+        _application([]),
+        limiter=limiter,
+        limit=10,
+        window_seconds=60,
+        trusted_proxy_networks=(ip_network("10.0.0.0/8"),),
+    )
+
+    await _run(
+        middleware,
+        _scope(
+            client=("10.10.10.10", 5000),
+            headers=[(b"x-forwarded-for", b"203.0.113.10, 10.10.10.11")],
+        ),
+    )
+
+    assert limiter.key(route="/api/v1/auth/token", peer="203.0.113.10") in redis.counts
+
+
+@pytest.mark.asyncio
+async def test_untrusted_peer_and_ambiguous_headers_fall_back_to_direct_peer() -> None:
+    redis = FakeRedis()
+    limiter = RedisFixedWindowLimiter(redis)
+    middleware = AuthRateLimitMiddleware(
+        _application([]),
+        limiter=limiter,
+        limit=10,
+        window_seconds=60,
+        trusted_proxy_networks=(ip_network("10.0.0.0/8"),),
+    )
+
+    for headers, client in [
+        ([(b"x-forwarded-for", b"203.0.113.10")], ("198.51.100.10", 5000)),
+        ([(b"x-forwarded-for", b"not-an-ip")], ("10.10.10.10", 5000)),
+        ([(b"x-forwarded-for", b"10.10.10.11")], ("10.10.10.10", 5000)),
+    ]:
+        await _run(middleware, _scope(client=client, headers=headers))
+
+    assert limiter.key(route="/api/v1/auth/token", peer="198.51.100.10") in redis.counts
+    assert limiter.key(route="/api/v1/auth/token", peer="10.10.10.10") in redis.counts
+    assert len(redis.counts) == 2
+
+
+def test_trusted_proxy_cidr_configuration_is_strict() -> None:
+    settings = Settings(trusted_proxy_cidrs="10.0.0.0/8, 2001:db8::/32")
+    assert tuple(str(network) for network in settings.trusted_proxy_networks) == (
+        "10.0.0.0/8",
+        "2001:db8::/32",
+    )
+    with pytest.raises(ValueError, match="Trusted proxy CIDRs"):
+        Settings(trusted_proxy_cidrs="10.0.0.0/8,not-a-network")
+    with pytest.raises(ValueError, match="Trusted proxy CIDRs"):
+        Settings(trusted_proxy_cidrs="10.0.0.0/8,,10.1.0.0/16")
 
 
 @pytest.mark.asyncio

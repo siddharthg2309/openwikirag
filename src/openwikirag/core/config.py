@@ -1,4 +1,5 @@
 from functools import lru_cache
+from ipaddress import IPv4Network, IPv6Network, ip_network
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
@@ -53,6 +54,7 @@ class Settings(BaseSettings):
     auth_rate_limit_enabled: bool = False
     auth_rate_limit_requests: int = Field(default=10, ge=1, le=10_000)
     auth_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3_600)
+    trusted_proxy_cidrs: str = ""
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
     qdrant_url: str = Field(default="http://127.0.0.1:6333", min_length=1)
     qdrant_api_key: str | None = None
@@ -96,6 +98,10 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Dense embedding model and expected digest must be configured together."
             )
+        try:
+            _ = self.trusted_proxy_networks
+        except ValueError as exc:
+            raise ValueError("Trusted proxy CIDRs must be valid IP networks.") from exc
         algorithms = self.oidc_algorithm_list
         supported = {
             "RS256",
@@ -130,6 +136,18 @@ class Settings(BaseSettings):
         """Return normalized OIDC algorithms from the comma-separated setting."""
 
         return tuple(item.strip() for item in self.oidc_algorithms.split(",") if item.strip())
+
+    @property
+    def trusted_proxy_networks(self) -> tuple[IPv4Network | IPv6Network, ...]:
+        """Return explicitly configured reverse-proxy networks."""
+
+        raw_values = self.trusted_proxy_cidrs.strip()
+        if not raw_values:
+            return ()
+        values = tuple(item.strip() for item in raw_values.split(","))
+        if any(not item for item in values):
+            raise ValueError("Trusted proxy CIDRs cannot contain empty entries.")
+        return tuple(ip_network(item, strict=False) for item in values)
 
     ingestion_stream_name: str = Field(default="openwikirag:ingestion", min_length=1)
     outbox_batch_size: int = Field(default=100, ge=1, le=1000)

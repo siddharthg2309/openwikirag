@@ -1,11 +1,17 @@
 """ASGI boundary for distributed throttling of unauthenticated auth routes."""
 
+from collections.abc import Sequence
+from ipaddress import IPv4Address, IPv4Network, IPv6Address, IPv6Network, ip_address
+
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from openwikirag.security.rate_limit import RateLimiter, RateLimitUnavailable
 
 _AUTH_ROUTES = frozenset({"/api/v1/auth/register", "/api/v1/auth/token"})
+_MAX_FORWARDED_HOPS = 16
+_IPNetwork = IPv4Network | IPv6Network
+_IPAddress = IPv4Address | IPv6Address
 
 
 def _direct_peer(scope: Scope) -> str | None:
@@ -16,6 +22,56 @@ def _direct_peer(scope: Scope) -> str | None:
     if not isinstance(peer, str) or not peer or len(peer) > 255:
         return None
     return peer
+
+
+def _parse_ip(value: str) -> _IPAddress | None:
+    try:
+        return ip_address(value.strip())
+    except ValueError:
+        return None
+
+
+def _is_trusted(address: _IPAddress, networks: Sequence[_IPNetwork]) -> bool:
+    return any(address in network for network in networks)
+
+
+def _forwarded_addresses(scope: Scope) -> tuple[_IPAddress, ...] | None:
+    values: list[str] = []
+    for key, value in scope.get("headers", []):
+        if key.lower() != b"x-forwarded-for":
+            continue
+        try:
+            values.extend(value.decode("ascii").split(","))
+        except UnicodeDecodeError:
+            return None
+    if not values:
+        return ()
+    if len(values) > _MAX_FORWARDED_HOPS:
+        return None
+    parsed = tuple(_parse_ip(value) for value in values)
+    if any(address is None for address in parsed):
+        return None
+    return tuple(address for address in parsed if address is not None)
+
+
+def _client_identity(scope: Scope, trusted_proxy_networks: Sequence[_IPNetwork]) -> str | None:
+    """Resolve one limiter identity without trusting arbitrary forwarded headers."""
+
+    direct_peer = _direct_peer(scope)
+    if direct_peer is None or not trusted_proxy_networks:
+        return direct_peer
+
+    direct_address = _parse_ip(direct_peer)
+    if direct_address is None or not _is_trusted(direct_address, trusted_proxy_networks):
+        return direct_peer
+
+    forwarded = _forwarded_addresses(scope)
+    if not forwarded:
+        return direct_peer
+    for address in reversed(forwarded):
+        if not _is_trusted(address, trusted_proxy_networks):
+            return str(address)
+    return direct_peer
 
 
 def _quota_headers(*, limit: int, remaining: int, retry_after: int) -> dict[str, str]:
@@ -63,6 +119,7 @@ class AuthRateLimitMiddleware:
         limiter: RateLimiter | None,
         limit: int,
         window_seconds: int,
+        trusted_proxy_networks: Sequence[_IPNetwork] = (),
     ) -> None:
         if limit < 1 or window_seconds < 1:
             raise ValueError("Rate-limit settings must be positive.")
@@ -70,6 +127,7 @@ class AuthRateLimitMiddleware:
         self._limiter = limiter
         self._limit = limit
         self._window_seconds = window_seconds
+        self._trusted_proxy_networks = tuple(trusted_proxy_networks)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if (
@@ -81,7 +139,7 @@ class AuthRateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        peer = _direct_peer(scope)
+        peer = _client_identity(scope, self._trusted_proxy_networks)
         if peer is None:
             await _send_failure(scope, receive, send, status=503)
             return
