@@ -1,5 +1,24 @@
 name: openwikirag
 
+x-openwikirag-environment: &openwikirag-environment
+  OPENWIKIRAG_ENVIRONMENT: ${OPENWIKIRAG_ENVIRONMENT:-development}
+  OPENWIKIRAG_LOG_LEVEL: ${OPENWIKIRAG_LOG_LEVEL:-INFO}
+  OPENWIKIRAG_API_HOST: 0.0.0.0
+  OPENWIKIRAG_API_PORT: "8000"
+  OPENWIKIRAG_DATABASE_URL: "postgresql+asyncpg://openwikirag_app:${POSTGRES_APP_PASSWORD:-openwikirag-dev-password}@postgres:5432/${POSTGRES_DB:-openwikirag}"
+  OPENWIKIRAG_MIGRATION_DATABASE_URL: "postgresql+asyncpg://openwikirag:${POSTGRES_PASSWORD:-openwikirag-dev-password}@postgres:5432/${POSTGRES_DB:-openwikirag}"
+  OPENWIKIRAG_JWT_SECRET: ${OPENWIKIRAG_JWT_SECRET:-replace-with-a-long-development-secret-at-least-32-chars}
+  OPENWIKIRAG_JWT_ISSUER: ${OPENWIKIRAG_JWT_ISSUER:-openwikirag-compose}
+  OPENWIKIRAG_JWT_AUDIENCE: ${OPENWIKIRAG_JWT_AUDIENCE:-openwikirag-api}
+  OPENWIKIRAG_OBJECT_STORE_ROOT: /data/objects
+  OPENWIKIRAG_REDIS_URL: redis://redis:6379/0
+  OPENWIKIRAG_QDRANT_URL: http://qdrant:6333
+  OPENWIKIRAG_NEO4J_URI: bolt://neo4j:7687
+  OPENWIKIRAG_NEO4J_USER: neo4j
+  OPENWIKIRAG_NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openwikirag-dev-password}
+  OPENWIKIRAG_GRAPH_ENABLED: ${OPENWIKIRAG_GRAPH_ENABLED:-false}
+  OPENWIKIRAG_INGESTION_CONSUMER_NAME: ${OPENWIKIRAG_INGESTION_CONSUMER_NAME:-compose-worker}
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -9,7 +28,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openwikirag-dev-password}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-openwikirag-dev-password}
     ports:
-      - "5432:5432"
+      - "${OPENWIKIRAG_POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
@@ -22,7 +41,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${OPENWIKIRAG_REDIS_PORT:-6379}:6379"
     volumes:
       - redis-data:/data
     command: ["redis-server", "--appendonly", "yes"]
@@ -39,8 +58,8 @@ services:
       NEO4J_server_memory_heap_initial__size: 512m
       NEO4J_server_memory_heap_max__size: 1G
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "${OPENWIKIRAG_NEO4J_HTTP_PORT:-7474}:7474"
+      - "${OPENWIKIRAG_NEO4J_BOLT_PORT:-7687}:7687"
     volumes:
       - neo4j-data:/data
       - neo4j-logs:/logs
@@ -48,8 +67,8 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.14.1
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "${OPENWIKIRAG_QDRANT_HTTP_PORT:-6333}:6333"
+      - "${OPENWIKIRAG_QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant-data:/qdrant/storage
 
@@ -59,13 +78,78 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-openwikirag}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-openwikirag-dev-password}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${OPENWIKIRAG_MINIO_API_PORT:-9000}:9000"
+      - "${OPENWIKIRAG_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - minio-data:/data
     command: ["server", "/data", "--console-address", ":9001"]
 
+  migrate:
+    build:
+      context: .
+    image: openwikirag:local
+    environment: *openwikirag-environment
+    command:
+      ["sh", "-c", "alembic upgrade head && python -m openwikirag.checkpoint_cli --grant-role openwikirag_app"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    healthcheck:
+      disable: true
+
+  api:
+    build:
+      context: .
+    image: openwikirag:local
+    environment: *openwikirag-environment
+    command: ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - app-objects:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  worker:
+    build:
+      context: .
+    image: openwikirag:local
+    environment: *openwikirag-environment
+    command: ["python", "-m", "apps.worker.app.main"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    volumes:
+      - app-objects:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      disable: true
+
 volumes:
+  app-objects:
   postgres-data:
   redis-data:
   neo4j-data:

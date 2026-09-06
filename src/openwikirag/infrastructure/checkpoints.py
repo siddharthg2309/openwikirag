@@ -30,13 +30,41 @@ async def checkpoint_store(url: str) -> AsyncIterator[AsyncPostgresSaver]:
 
 
 async def setup_checkpoints(url: str, *, grant_role: str | None = None) -> None:
-    """Operator-only SDK migrations and optional restricted application grants."""
+    """Run SDK migrations and optionally repair explicit application grants."""
     async with await AsyncConnection.connect(postgres_dsn(url), autocommit=True) as connection:
         await connection.execute("CREATE SCHEMA IF NOT EXISTS ow_checkpoints")
     async with checkpoint_store(url) as saver:
         await saver.setup()
     if grant_role:
         async with await AsyncConnection.connect(postgres_dsn(url), autocommit=True) as connection:
+            await connection.execute(
+                sql.SQL("GRANT USAGE ON SCHEMA public TO {}")
+                .format(sql.Identifier(grant_role))
+            )
+            await connection.execute(
+                sql.SQL(
+                    "GRANT SELECT, INSERT, UPDATE, DELETE "
+                    "ON ALL TABLES IN SCHEMA public TO {}"
+                ).format(sql.Identifier(grant_role))
+            )
+            await connection.execute(
+                sql.SQL(
+                    "GRANT USAGE, SELECT, UPDATE "
+                    "ON ALL SEQUENCES IN SCHEMA public TO {}"
+                ).format(sql.Identifier(grant_role))
+            )
+            await connection.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+                    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {}"
+                ).format(sql.Identifier(grant_role))
+            )
+            await connection.execute(
+                sql.SQL(
+                    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+                    "GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO {}"
+                ).format(sql.Identifier(grant_role))
+            )
             await connection.execute(
                 sql.SQL("GRANT USAGE ON SCHEMA ow_checkpoints TO {}").format(
                     sql.Identifier(grant_role)
