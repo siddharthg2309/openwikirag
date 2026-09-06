@@ -39,6 +39,7 @@ from openwikirag.application.wiki_regeneration import (
     WikiJobRouter,
     WikiRegenerationHandler,
 )
+from openwikirag.core.metrics import DEFAULT_METRICS, MetricsRegistry
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import (
     Base,
@@ -304,6 +305,7 @@ def make_service(
     handler: IngestionHandler,
     *,
     lease_seconds: int = 60,
+    metrics: MetricsRegistry | None = None,
 ) -> IngestionConsumerService:
     return IngestionConsumerService(
         session,
@@ -318,7 +320,34 @@ def make_service(
         retry_backoff_max_seconds=60,
         batch_size=10,
         block_ms=1,
+        metrics=metrics,
     )
+
+
+async def test_successful_ingestion_records_bounded_metrics(session: AsyncSession) -> None:
+    DEFAULT_METRICS.reset()
+    try:
+        tenant, job = await create_job(session)
+        transport = FakeTransport()
+        transport.new_messages.append(make_message(tenant.id, job.id))
+
+        service = make_service(
+            session,
+            transport,
+            RecordingHandler(),
+            metrics=DEFAULT_METRICS,
+        )
+
+        assert await service.consume_once() == 1
+
+        output = DEFAULT_METRICS.render()
+        assert 'openwikirag_ingestion_messages_total{outcome="succeeded"} 1' in output
+        assert (
+            'openwikirag_ingestion_message_duration_seconds_count{outcome="succeeded"} 1'
+            in output
+        )
+    finally:
+        DEFAULT_METRICS.reset()
 
 
 async def create_job_with_source(

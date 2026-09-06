@@ -9,9 +9,43 @@ import structlog
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from openwikirag.core.logging import clear_request_context, set_request_context
+from openwikirag.core.metrics import (
+    DEFAULT_METRICS,
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+    MetricsError,
+    MetricsRegistry,
+)
 
 logger = structlog.get_logger("openwikirag.api")
 _REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
+_METRIC_METHODS = frozenset({"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"})
+_METRIC_ROUTES = frozenset(
+    {
+        "/",
+        "/healthz",
+        "/readyz",
+        "/metrics",
+        "/api/v1/me",
+        "/api/v1/auth/register",
+        "/api/v1/auth/token",
+        "/api/v1/documents",
+        "/api/v1/jobs/{job_id}",
+        "/api/v1/wiki/pages",
+        "/api/v1/wiki/pages/{artifact_id}",
+        "/api/v1/wiki/pages/{artifact_id}/review",
+        "/api/v1/wiki/pages/{artifact_id}/regenerate",
+        "/api/v1/search",
+        "/api/v1/answers",
+        "/api/v1/answers/{run_id}",
+        "/api/v1/answers/{run_id}/trace",
+        "/api/v1/answers/{run_id}/execute",
+        "/api/v1/answers/{run_id}/stream",
+        "/api/v1/conversations",
+        "/api/v1/conversations/{conversation_id}",
+        "/api/v1/memory",
+    }
+)
 
 
 def normalize_request_id(value: str | None) -> str:
@@ -52,11 +86,36 @@ def _response_headers(message: Message, request_id: str) -> Message:
     return {**message, "headers": headers}
 
 
+def _metric_route(scope: Scope) -> str:
+    route = scope.get("route")
+    path_format = getattr(route, "path_format", None)
+    if isinstance(path_format, str) and path_format in _METRIC_ROUTES:
+        return path_format
+    path = scope.get("path")
+    if isinstance(path, str) and path in _METRIC_ROUTES:
+        return path
+    return "unmatched"
+
+
+def _metric_method(scope: Scope) -> str:
+    method = scope.get("method")
+    if isinstance(method, str) and method in _METRIC_METHODS:
+        return method
+    return "OTHER"
+
+
+def _metric_status_class(status_code: int) -> str:
+    if 100 <= status_code <= 599:
+        return f"{status_code // 100}xx"
+    return "unknown"
+
+
 class RequestContextMiddleware:
     """Bind one safe request id for the complete lifetime of an HTTP request."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, metrics: MetricsRegistry | None = None) -> None:
         self.app = app
+        self._metrics = metrics or DEFAULT_METRICS
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
@@ -101,4 +160,24 @@ class RequestContextMiddleware:
                 outcome="success" if status_code < 500 else "failure",
             )
         finally:
+            duration_seconds = max(time.perf_counter() - started, 0.0)
+            try:
+                self._metrics.increment(
+                    HTTP_REQUESTS_TOTAL,
+                    labels={
+                        "route": _metric_route(scoped),
+                        "method": _metric_method(scoped),
+                        "status_class": _metric_status_class(status_code),
+                    },
+                )
+                self._metrics.observe(
+                    HTTP_REQUEST_DURATION_SECONDS,
+                    duration_seconds,
+                    labels={
+                        "route": _metric_route(scoped),
+                        "method": _metric_method(scoped),
+                    },
+                )
+            except MetricsError:
+                logger.warning("http_metrics_record_failed")
             clear_request_context()

@@ -7,6 +7,7 @@ from apps.worker.app.main import build_extractor_registry
 from openwikirag.application.extraction import DocxExtractor, PdfExtractor
 from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import Settings
+from openwikirag.core.metrics import DEFAULT_METRICS
 
 
 class FakeOutbox:
@@ -82,6 +83,20 @@ async def test_cycle_order_and_counts_are_explicit() -> None:
     assert result.consumed == 3
     assert outbox.calls == [7]
     assert ingestion.calls == ["reclaim", "consume"]
+
+
+async def test_successful_cycle_records_bounded_metrics() -> None:
+    DEFAULT_METRICS.reset()
+    try:
+        worker = make_loop(FakeOutbox(), FakeIngestion(), FakeSession())
+
+        await worker.run_once()
+
+        output = DEFAULT_METRICS.render()
+        assert 'openwikirag_worker_cycles_total{outcome="success"} 1' in output
+        assert 'openwikirag_worker_cycle_duration_seconds_count{outcome="success"} 1' in output
+    finally:
+        DEFAULT_METRICS.reset()
 
 
 async def test_run_ensures_group_and_stops_at_safe_boundary() -> None:

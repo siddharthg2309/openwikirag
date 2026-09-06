@@ -1,13 +1,22 @@
 """Recoverable Redis consumer-group orchestration for ingestion jobs."""
 
 import json
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openwikirag.core.metrics import (
+    DEFAULT_METRICS,
+    INGESTION_MESSAGE_DURATION_SECONDS,
+    INGESTION_MESSAGES_TOTAL,
+    MetricsError,
+    MetricsRegistry,
+)
 from openwikirag.infrastructure.models import IngestionJob
 from openwikirag.infrastructure.repositories.jobs import (
     JobClaim,
@@ -20,6 +29,8 @@ from openwikirag.security.authorization import (
     Permission,
     Principal,
 )
+
+logger = structlog.get_logger(__name__)
 
 
 class IngestionHandler(Protocol):
@@ -43,6 +54,9 @@ class MalformedJobMessageError(Exception):
 
 WIKI_REGENERATION_EVENT_TYPE = "wiki.page.regeneration.requested"
 WIKI_REGENERATION_JOB_TYPE = "wiki_regeneration"
+_METRIC_OUTCOMES = frozenset(
+    {"succeeded", "retryable", "dead_letter", "terminal", "skipped", "error"}
+)
 
 
 INGESTION_EVENT_JOB_TYPES: dict[str, str] = {
@@ -189,6 +203,7 @@ class IngestionConsumerService:
         retry_backoff_max_seconds: int,
         batch_size: int = 10,
         block_ms: int = 100,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         self._session = session
         self._transport = transport
@@ -203,6 +218,7 @@ class IngestionConsumerService:
         self._batch_size = batch_size
         self._block_ms = block_ms
         self._jobs = JobRepository(session)
+        self._metrics = metrics or DEFAULT_METRICS
 
     async def ensure_group(self) -> None:
         await self._transport.ensure_group(
@@ -235,11 +251,29 @@ class IngestionConsumerService:
         return len(messages)
 
     async def _handle_message(self, message: StreamMessage) -> None:
+        started = time.perf_counter()
+        outcome = "error"
+        try:
+            outcome = await self._handle_message_inner(message)
+        finally:
+            metric_outcome = outcome if outcome in _METRIC_OUTCOMES else "error"
+            try:
+                labels = {"outcome": metric_outcome}
+                self._metrics.increment(INGESTION_MESSAGES_TOTAL, labels=labels)
+                self._metrics.observe(
+                    INGESTION_MESSAGE_DURATION_SECONDS,
+                    max(time.perf_counter() - started, 0.0),
+                    labels=labels,
+                )
+            except MetricsError:
+                logger.warning("ingestion_metrics_record_failed")
+
+    async def _handle_message_inner(self, message: StreamMessage) -> str:
         try:
             event = parse_ingestion_event(message)
         except MalformedJobMessageError:
             await self._dead_letter_then_ack(message, reason="MALFORMED_EVENT")
-            return
+            return "dead_letter"
 
         claim = await self._jobs.claim(
             job_id=event.job_id,
@@ -249,14 +283,14 @@ class IngestionConsumerService:
         if claim.status is JobClaimStatus.MISSING:
             await self._session.rollback()
             await self._dead_letter_then_ack(message, reason="JOB_NOT_FOUND")
-            return
+            return "dead_letter"
         if claim.status is JobClaimStatus.TERMINAL:
             await self._session.rollback()
             await self._acknowledge(message)
-            return
+            return "terminal"
         if claim.status in {JobClaimStatus.ACTIVE, JobClaimStatus.NOT_DUE}:
             await self._session.rollback()
-            return
+            return "skipped"
         if claim.status is JobClaimStatus.EXHAUSTED:
             assert claim.job is not None
             await self._dead_letter_job_then_ack(
@@ -264,7 +298,7 @@ class IngestionConsumerService:
                 claim.job,
                 reason="MAX_ATTEMPTS_EXCEEDED",
             )
-            return
+            return "dead_letter"
 
         assert claim.status is JobClaimStatus.CLAIMED
         assert claim.job is not None
@@ -275,15 +309,15 @@ class IngestionConsumerService:
                 error_code="INGESTION_EVENT_JOB_MISMATCH",
             )
             await self._dead_letter_then_ack(message, reason="INGESTION_EVENT_JOB_MISMATCH")
-            return
-        await self._run_claimed_job(message, event, claim)
+            return "dead_letter"
+        return await self._run_claimed_job(message, event, claim)
 
     async def _run_claimed_job(
         self,
         message: StreamMessage,
         event: IngestionEvent,
         claim: JobClaim,
-    ) -> None:
+    ) -> str:
         assert claim.job is not None
         try:
             await self._handler.handle(job=claim.job, payload=event.payload)
@@ -296,7 +330,7 @@ class IngestionConsumerService:
                 max_backoff_seconds=self._retry_backoff_max_seconds,
             )
             await self._session.commit()
-            return
+            return "retryable"
         except PermanentJobError:
             job = await self._refresh_claimed_job(claim.job)
             await self._jobs.mark_dead_letter(
@@ -304,7 +338,7 @@ class IngestionConsumerService:
                 error_code="INGESTION_PERMANENT_FAILURE",
             )
             await self._dead_letter_then_ack(message, reason="INGESTION_PERMANENT_FAILURE")
-            return
+            return "dead_letter"
         except Exception:
             job = await self._refresh_claimed_job(claim.job)
             await self._jobs.mark_retryable(
@@ -314,12 +348,13 @@ class IngestionConsumerService:
                 max_backoff_seconds=self._retry_backoff_max_seconds,
             )
             await self._session.commit()
-            return
+            return "retryable"
 
         job = await self._refresh_claimed_job(claim.job)
         await self._jobs.mark_succeeded(job)
         await self._session.commit()
         await self._acknowledge(message)
+        return "succeeded"
 
     async def _refresh_claimed_job(self, job: IngestionJob) -> IngestionJob:
         """Reload job state after a handler may have closed its transaction."""

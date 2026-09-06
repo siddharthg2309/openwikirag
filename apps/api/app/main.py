@@ -4,10 +4,12 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import PlainTextResponse
 
 from openwikirag import __version__
 from openwikirag.core.config import get_settings
 from openwikirag.core.logging import configure_logging
+from openwikirag.core.metrics import DEFAULT_METRICS
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.security.authorization import Principal, Role
 
@@ -70,6 +72,16 @@ async def readyz() -> dict[str, object]:
     """
 
     return {"status": "ready", "checks": {"configuration": "ok"}}
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> PlainTextResponse:
+    """Expose aggregate application metrics for a Prometheus-compatible scraper."""
+
+    return PlainTextResponse(
+        DEFAULT_METRICS.render(),
+        media_type="text/plain; version=0.0.4",
+    )
 
 
 @app.get("/api/v1/me", response_model=MeResponse, tags=["identity"])

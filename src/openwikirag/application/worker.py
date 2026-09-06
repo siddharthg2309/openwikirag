@@ -1,11 +1,20 @@
 """Bounded worker loop for the outbox relay and ingestion consumer."""
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
 import structlog
+
+from openwikirag.core.metrics import (
+    DEFAULT_METRICS,
+    WORKER_CYCLE_DURATION_SECONDS,
+    WORKER_CYCLES_TOTAL,
+    MetricsError,
+    MetricsRegistry,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -60,6 +69,7 @@ class WorkerLoop:
         idle_poll_interval_seconds: float,
         error_backoff_seconds: float,
         wait_for_next_cycle: WaitForNextCycle | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         if outbox_batch_size < 1:
             raise ValueError("The outbox batch size must be positive.")
@@ -72,18 +82,26 @@ class WorkerLoop:
         self._idle_poll_interval_seconds = idle_poll_interval_seconds
         self._error_backoff_seconds = error_backoff_seconds
         self._wait_for_next_cycle = wait_for_next_cycle or _wait_for_stop_or_timeout
+        self._metrics = metrics or DEFAULT_METRICS
 
     async def run_once(self) -> WorkerCycleResult:
         """Relay, reclaim, and consume one deterministic bounded cycle."""
 
-        published = await self._outbox.publish_pending(limit=self._outbox_batch_size)
-        reclaimed = await self._ingestion.reclaim_once()
-        consumed = await self._ingestion.consume_once()
-        return WorkerCycleResult(
-            published=len(published),
-            reclaimed=reclaimed,
-            consumed=consumed,
-        )
+        started = time.perf_counter()
+        try:
+            published = await self._outbox.publish_pending(limit=self._outbox_batch_size)
+            reclaimed = await self._ingestion.reclaim_once()
+            consumed = await self._ingestion.consume_once()
+            result = WorkerCycleResult(
+                published=len(published),
+                reclaimed=reclaimed,
+                consumed=consumed,
+            )
+        except BaseException:
+            self._record_cycle_metrics(outcome="failure", started=started)
+            raise
+        self._record_cycle_metrics(outcome="success", started=started)
+        return result
 
     async def run(self, stop_event: asyncio.Event) -> None:
         """Run until a stop event is set or cancellation is requested."""
@@ -118,6 +136,18 @@ class WorkerLoop:
             await self._session.rollback()
         except Exception:
             logger.exception("worker_session_rollback_failed")
+
+    def _record_cycle_metrics(self, *, outcome: str, started: float) -> None:
+        try:
+            labels = {"outcome": outcome}
+            self._metrics.increment(WORKER_CYCLES_TOTAL, labels=labels)
+            self._metrics.observe(
+                WORKER_CYCLE_DURATION_SECONDS,
+                max(time.perf_counter() - started, 0.0),
+                labels=labels,
+            )
+        except MetricsError:
+            logger.warning("worker_metrics_record_failed")
 
 
 async def _wait_for_stop_or_timeout(stop_event: asyncio.Event, delay_seconds: float) -> None:
