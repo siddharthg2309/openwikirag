@@ -27,12 +27,14 @@ def test_workload_limits_fail_closed() -> None:
         BenchmarkConfig(documents=501)
     with pytest.raises(BenchmarkInputError):
         BenchmarkConfig(queries=21)
+    with pytest.raises(BenchmarkInputError):
+        BenchmarkConfig(concurrency=33)
 
 
 @pytest.mark.asyncio
 async def test_benchmark_reports_all_modes_and_finite_statistics() -> None:
     report = await run_benchmark(
-        BenchmarkConfig(documents=2, queries=2, warmup=1, iterations=2)
+        BenchmarkConfig(documents=2, queries=2, warmup=1, iterations=2, concurrency=3)
     )
     assert report["schema_version"] == "benchmark-v1"
     workload = report["workload"]
@@ -46,6 +48,8 @@ async def test_benchmark_reports_all_modes_and_finite_statistics() -> None:
         for summary in mode.values():
             assert isinstance(summary, dict)
             assert summary["sample_count"] == 2
+            assert summary["operations_per_sample"] == 3
+            assert summary["operations_per_second"] > 0
             assert summary["p95"] >= summary["p50"]
             assert all(
                 math.isfinite(float(summary[key]))
@@ -55,12 +59,26 @@ async def test_benchmark_reports_all_modes_and_finite_statistics() -> None:
 
 def test_cli_emits_machine_readable_json(capsys: pytest.CaptureFixture[str]) -> None:
     assert (
-        main(["--documents", "1", "--queries", "1", "--warmup", "0", "--iterations", "1"])
+        main(
+            [
+                "--documents",
+                "1",
+                "--queries",
+                "1",
+                "--warmup",
+                "0",
+                "--iterations",
+                "1",
+                "--concurrency",
+                "2",
+            ]
+        )
         == 0
     )
     report = json.loads(capsys.readouterr().out)
     assert report["workload"]["documents"] == 1
     assert report["workload"]["measured_iterations"] == 1
+    assert report["workload"]["concurrency"] == 2
 
 
 def test_cli_rejects_invalid_limits() -> None:

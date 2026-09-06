@@ -48,6 +48,7 @@ MAX_DOCUMENTS = 500
 MAX_QUERIES = 20
 MAX_WARMUP_ITERATIONS = 100
 MAX_MEASURED_ITERATIONS = 1_000
+MAX_CONCURRENCY = 32
 BENCHMARK_MODES: tuple[RetrievalMode, ...] = ("dense", "sparse", "hybrid")
 
 
@@ -63,6 +64,7 @@ class BenchmarkConfig:
     queries: int = 4
     warmup: int = 3
     iterations: int = 20
+    concurrency: int = 1
 
     def __post_init__(self) -> None:
         bounds = (
@@ -70,6 +72,7 @@ class BenchmarkConfig:
             ("queries", self.queries, 1, MAX_QUERIES),
             ("warmup", self.warmup, 0, MAX_WARMUP_ITERATIONS),
             ("iterations", self.iterations, 1, MAX_MEASURED_ITERATIONS),
+            ("concurrency", self.concurrency, 1, MAX_CONCURRENCY),
         )
         for name, value, minimum, maximum in bounds:
             if type(value) is not int or not minimum <= value <= maximum:
@@ -91,17 +94,24 @@ def _percentile(samples: tuple[float, ...], quantile: float) -> float:
     return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
 
 
-def _summarize(samples: tuple[float, ...]) -> dict[str, float | int | str]:
+def _summarize(
+    samples: tuple[float, ...], *, operations_per_sample: int
+) -> dict[str, float | int | str]:
     if not samples or any(not math.isfinite(value) or value < 0.0 for value in samples):
         raise BenchmarkInputError("Benchmark timings must be finite and non-negative.")
+    if type(operations_per_sample) is not int or operations_per_sample < 1:
+        raise BenchmarkInputError("Benchmark operations per sample must be positive.")
+    mean_seconds = statistics.fmean(samples)
     return {
         "unit": "milliseconds",
         "sample_count": len(samples),
+        "operations_per_sample": operations_per_sample,
         "min": min(samples) * 1_000,
-        "mean": statistics.fmean(samples) * 1_000,
+        "mean": mean_seconds * 1_000,
         "p50": _percentile(samples, 0.50) * 1_000,
         "p95": _percentile(samples, 0.95) * 1_000,
         "max": max(samples) * 1_000,
+        "operations_per_second": operations_per_sample / mean_seconds,
     }
 
 
@@ -176,8 +186,9 @@ async def _measure_mode(
     queries: tuple[str, ...],
     warmup: int,
     iterations: int,
+    concurrency: int,
 ) -> dict[str, dict[str, float | int | str]]:
-    requests = tuple(
+    query_requests = tuple(
         SearchRequest(
             tenant_id=BENCHMARK_TENANT_ID,
             query=query,
@@ -186,18 +197,19 @@ async def _measure_mode(
         )
         for query in queries
     )
+    requests = tuple(query_requests[index % len(query_requests)] for index in range(concurrency))
     fusion = ReciprocalRankFusionService()
 
     for _ in range(warmup):
-        for request in requests:
-            retrieval = await service.retrieve(request)
+        retrievals = await asyncio.gather(*(service.retrieve(request) for request in requests))
+        for retrieval in retrievals:
             deduplicate_evidence(fusion.fuse(retrieval))
 
     retrieval_samples: list[float] = []
     fusion_samples: list[float] = []
     for _ in range(iterations):
         started = time.perf_counter()
-        results = [await service.retrieve(request) for request in requests]
+        results = await asyncio.gather(*(service.retrieve(request) for request in requests))
         retrieval_samples.append(time.perf_counter() - started)
 
         started = time.perf_counter()
@@ -206,8 +218,12 @@ async def _measure_mode(
         fusion_samples.append(time.perf_counter() - started)
 
     return {
-        "candidate_retrieval": _summarize(tuple(retrieval_samples)),
-        "fusion_deduplication": _summarize(tuple(fusion_samples)),
+        "candidate_retrieval": _summarize(
+            tuple(retrieval_samples), operations_per_sample=concurrency
+        ),
+        "fusion_deduplication": _summarize(
+            tuple(fusion_samples), operations_per_sample=concurrency
+        ),
     }
 
 
@@ -232,6 +248,7 @@ async def run_benchmark(config: BenchmarkConfig) -> dict[str, object]:
             queries=queries,
             warmup=config.warmup,
             iterations=config.iterations,
+            concurrency=config.concurrency,
         )
     return {
         "schema_version": BENCHMARK_SCHEMA_VERSION,
@@ -239,6 +256,8 @@ async def run_benchmark(config: BenchmarkConfig) -> dict[str, object]:
             "documents": config.documents,
             "vector_points": len(points),
             "queries_per_sample": config.queries,
+            "concurrency": config.concurrency,
+            "requests_per_sample": config.concurrency,
             "warmup_iterations": config.warmup,
             "measured_iterations": config.iterations,
             "tenant_scope": "one synthetic tenant",
@@ -258,6 +277,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--queries", type=int, default=4)
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--iterations", type=int, default=20)
+    parser.add_argument("--concurrency", type=int, default=1)
     return parser
 
 
@@ -270,6 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             queries=args.queries,
             warmup=args.warmup,
             iterations=args.iterations,
+            concurrency=args.concurrency,
         )
         report = asyncio.run(run_benchmark(config))
     except BenchmarkInputError as exc:
