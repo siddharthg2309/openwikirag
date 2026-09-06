@@ -16,6 +16,11 @@ def test_ci_is_read_only_locked_and_runs_deployment_smoke() -> None:
     assert "uv run --no-sync pytest -q" in workflow
     assert "uv run --no-sync ruff check ." in workflow
     assert "uv run --no-sync mypy" in workflow
+    assert 'audit_requirements="$(mktemp)"' in workflow
+    assert "uv export --quiet --locked --all-groups --no-emit-project" in workflow
+    assert "--format requirements.txt --output-file \"$audit_requirements\"" in workflow
+    assert "uv run --no-sync pip-audit --strict --require-hashes" in workflow
+    assert "--requirement \"$audit_requirements\"" in workflow
     assert "uv lock --check" in workflow
     assert "docker build" in workflow
     assert "ops/smoke_compose.sh" in workflow

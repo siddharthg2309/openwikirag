@@ -29,6 +29,14 @@ jobs:
         run: uv run --no-sync ruff check .
       - name: Run type checks
         run: uv run --no-sync mypy
+      - name: Audit locked Python dependencies
+        run: |
+          audit_requirements="$(mktemp)"
+          trap 'rm -f "$audit_requirements"' EXIT
+          uv export --quiet --locked --all-groups --no-emit-project \
+            --format requirements.txt --output-file "$audit_requirements"
+          uv run --no-sync pip-audit --strict --require-hashes \
+            --progress-spinner off --requirement "$audit_requirements"
       - name: Verify lockfile
         run: uv lock --check
       - name: Build application image
