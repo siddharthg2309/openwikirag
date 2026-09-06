@@ -42,7 +42,8 @@ def test_compose_migration_gates_api_and_worker() -> None:
         assert "app-objects:/data" in service
         assert "read_only: true" in service
         assert "no-new-privileges:true" in service
-    assert "healthcheck:\n      disable: true" in worker
+    assert "healthcheck:" in worker
+    assert "/readyz" in worker
 
 
 def test_compose_uses_container_dns_and_explicit_process_commands() -> None:

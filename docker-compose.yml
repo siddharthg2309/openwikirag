@@ -5,6 +5,8 @@ x-openwikirag-environment: &openwikirag-environment
   OPENWIKIRAG_LOG_LEVEL: ${OPENWIKIRAG_LOG_LEVEL:-INFO}
   OPENWIKIRAG_API_HOST: 0.0.0.0
   OPENWIKIRAG_API_PORT: "8000"
+  OPENWIKIRAG_WORKER_HEALTH_HOST: 0.0.0.0
+  OPENWIKIRAG_WORKER_HEALTH_PORT: "8001"
   OPENWIKIRAG_DATABASE_URL: "postgresql+asyncpg://openwikirag_app:${POSTGRES_APP_PASSWORD:-openwikirag-dev-password}@postgres:5432/${POSTGRES_DB:-openwikirag}"
   OPENWIKIRAG_MIGRATION_DATABASE_URL: "postgresql+asyncpg://openwikirag:${POSTGRES_PASSWORD:-openwikirag-dev-password}@postgres:5432/${POSTGRES_DB:-openwikirag}"
   OPENWIKIRAG_JWT_SECRET: ${OPENWIKIRAG_JWT_SECRET:-replace-with-a-long-development-secret-at-least-32-chars}
@@ -164,7 +166,12 @@ services:
     cap_drop:
       - ALL
     healthcheck:
-      disable: true
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/readyz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3
 
 volumes:
   app-objects:

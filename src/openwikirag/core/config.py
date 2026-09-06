@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", min_length=1)
     api_host: str = Field(default="127.0.0.1", min_length=1)
     api_port: int = Field(default=8000, ge=1, le=65535)
+    worker_health_host: str = Field(default="127.0.0.1", min_length=1)
+    worker_health_port: int = Field(default=8001, ge=1, le=65535)
     database_url: str = Field(
         default="postgresql+asyncpg://openwikirag_app:openwikirag-dev-password@127.0.0.1:5432/openwikirag",
         min_length=1,

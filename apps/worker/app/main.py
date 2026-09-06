@@ -47,6 +47,8 @@ from openwikirag.infrastructure.storage import LocalObjectStorage
 from openwikirag.infrastructure.streams import RedisStreamPublisher
 from openwikirag.infrastructure.wiki_ollama import OllamaWikiProvider
 
+from .health import WorkerHealthServer
+
 
 def build_extractor_registry(settings: Settings) -> ExtractorRegistry:
     """Compose the default parsers and optionally enable native PDF OCR."""
@@ -112,10 +114,22 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
         settings,
         config=QdrantCollectionConfig(vector=vector_config.collection),
     )
+    health_server = (
+        WorkerHealthServer(
+            host=settings.worker_health_host,
+            port=settings.worker_health_port,
+        )
+        if not once
+        else None
+    )
     try:
+        if health_server is not None:
+            await health_server.start()
         await vector_index.ensure_schema()
         if graph:
             await graph.ensure_schema()
+        if health_server is not None:
+            health_server.mark_ready()
         async with session_factory() as session:
             outbox = OutboxPublisherService(
                 session,
@@ -184,14 +198,18 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 await worker.run(stop_event or asyncio.Event())
     finally:
         try:
-            try:
-                if graph:
-                    await graph.close()
-            finally:
-                await vector_index.close()
+            if health_server is not None:
+                await health_server.close()
         finally:
-            await transport.close()
-            await engine.dispose()
+            try:
+                try:
+                    if graph:
+                        await graph.close()
+                finally:
+                    await vector_index.close()
+            finally:
+                await transport.close()
+                await engine.dispose()
 
 
 async def _run_from_cli(*, once: bool) -> None:
