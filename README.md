@@ -140,6 +140,7 @@ source before being returned.
 | Vector search | Qdrant 1.14.1 | Dense and sparse tenant-filtered retrieval |
 | Knowledge graph | Neo4j 5.26 | Relationship projection and bounded graph expansion |
 | Knowledge layer | WikiRAG artifacts and provenance contracts | Structured, reviewable document knowledge |
+| WikiRAG generation | Deterministic baseline + optional Ollama JSON-schema adapter | Server-owned model/digest checks with citation-evidence validation |
 | OCR runtime | Poppler `pdftoppm` and Tesseract 5.3 | Opt-in image-only PDF fallback with page-level provenance; English data is packaged in the application image |
 | Answer workflow | LangGraph with PostgreSQL checkpoints | Durable and resumable answer execution |
 | Local model | Ollama with `qwen2.5:7b` support | Local answer generation and model identity checks |

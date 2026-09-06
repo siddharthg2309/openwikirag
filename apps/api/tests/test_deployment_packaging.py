@@ -53,6 +53,9 @@ def test_compose_uses_container_dns_and_explicit_process_commands() -> None:
     assert "@postgres:5432/" in compose
     assert "OPENWIKIRAG_REDIS_URL: redis://redis:6379/0" in compose
     assert "OPENWIKIRAG_QDRANT_URL: http://qdrant:6333" in compose
+    assert "OPENWIKIRAG_WIKI_GENERATION_MODEL:" in compose
+    assert "OPENWIKIRAG_WIKI_GENERATION_MODEL_DIGEST:" in compose
+    assert "OPENWIKIRAG_WIKI_GENERATION_BASE_URL:" in compose
     assert 'command: ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0"' in api
     assert 'command: ["python", "-m", "apps.worker.app.main"]' in worker
     assert '"${OPENWIKIRAG_API_PORT:-8000}:8000"' in api

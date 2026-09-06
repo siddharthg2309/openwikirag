@@ -25,7 +25,10 @@ from openwikirag.application.ocr import (
 )
 from openwikirag.application.outbox import OutboxPublisherService
 from openwikirag.application.vector_ingestion import VectorIngestionConfig
-from openwikirag.application.wiki_generation import DeterministicWikiProvider
+from openwikirag.application.wiki_generation import (
+    DeterministicWikiProvider,
+    WikiGenerationProvider,
+)
 from openwikirag.application.wiki_ingestion import WikiIngestionHandler
 from openwikirag.application.wiki_regeneration import WikiJobRouter, WikiRegenerationHandler
 from openwikirag.application.worker import WorkerLoop
@@ -37,6 +40,7 @@ from openwikirag.infrastructure.neo4j import Neo4jProjection
 from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
 from openwikirag.infrastructure.storage import LocalObjectStorage
 from openwikirag.infrastructure.streams import RedisStreamPublisher
+from openwikirag.infrastructure.wiki_ollama import OllamaWikiProvider
 
 
 def build_extractor_registry(settings: Settings) -> ExtractorRegistry:
@@ -52,6 +56,7 @@ def build_extractor_registry(settings: Settings) -> ExtractorRegistry:
         timeout_seconds=settings.ocr_timeout_seconds,
         max_pages=settings.ocr_max_pages,
     )
+
     fallback = PdfOcrFallback(
         renderer=PopplerPageRenderer(),
         engine=TesseractOcrEngine(),
@@ -67,6 +72,19 @@ def build_extractor_registry(settings: Settings) -> ExtractorRegistry:
     )
 
 
+def build_wiki_generation_provider(settings: Settings) -> WikiGenerationProvider:
+    """Select a server-owned live model only when its immutable identity is complete."""
+
+    if not settings.wiki_generation_model.strip():
+        return DeterministicWikiProvider()
+    return OllamaWikiProvider(
+        model=settings.wiki_generation_model,
+        digest=settings.wiki_generation_model_digest,
+        base_url=settings.wiki_generation_base_url,
+        timeout_seconds=settings.wiki_generation_timeout_seconds,
+    )
+
+
 async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = False) -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
@@ -77,6 +95,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
     transport = RedisStreamPublisher.from_url(settings.redis_url)
     storage = LocalObjectStorage(Path(settings.object_store_root))
     extractors = build_extractor_registry(settings)
+    wiki_provider = build_wiki_generation_provider(settings)
     vector_config = VectorIngestionConfig()
     graph = Neo4jProjection.from_settings(settings) if settings.graph_enabled else None
     vector_index = QdrantVectorIndex.from_settings(
@@ -99,7 +118,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 vector_index,
                 config_hash=settings.wiki_generation_config_hash,
                 vector_config=vector_config,
-                provider=DeterministicWikiProvider(),
+                provider=wiki_provider,
                 extractors=extractors,
                 graph=graph,
             )
@@ -109,7 +128,7 @@ async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = Fa
                 vector_index,
                 config_hash=settings.wiki_regeneration_config_hash,
                 vector_config=vector_config,
-                provider=DeterministicWikiProvider(),
+                provider=wiki_provider,
                 extractors=extractors,
                 graph=graph,
             )

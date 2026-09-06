@@ -1,4 +1,6 @@
-"""Durable worker orchestration for the deterministic WikiRAG pipeline."""
+"""Durable worker orchestration for the WikiRAG pipeline."""
+
+import asyncio
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -120,7 +122,8 @@ class WikiIngestionHandler:
         job.current_step = "generate"
         await self._session.flush()
         try:
-            generation_result = self._generator.generate(
+            generation_result = await asyncio.to_thread(
+                self._generator.generate,
                 document=normalized.normalized_document,
                 page=page,
                 config_hash=self._config_hash,

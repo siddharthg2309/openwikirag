@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     answer_model: str = Field(default="", max_length=255)
     answer_model_digest: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
     answer_base_url: str = Field(default="http://127.0.0.1:11434", min_length=1)
+    wiki_generation_model: str = Field(default="", max_length=255)
+    wiki_generation_model_digest: str = Field(default="", pattern=r"^(|[0-9a-f]{64})$")
+    wiki_generation_base_url: str = Field(default="http://127.0.0.1:11434", min_length=1)
+    wiki_generation_timeout_seconds: float = Field(default=60.0, gt=0, le=300)
     score_cache_enabled: bool = False
     retrieval_index_version: str = Field(
         default="hash-dense-sparse-v1", min_length=1, max_length=255
@@ -68,6 +72,10 @@ class Settings(BaseSettings):
             raise ValueError("Reranker model and immutable revision must be configured together.")
         if bool(self.answer_model.strip()) != bool(self.answer_model_digest):
             raise ValueError("Answer model and expected digest must be configured together.")
+        if bool(self.wiki_generation_model.strip()) != bool(self.wiki_generation_model_digest):
+            raise ValueError(
+                "Wiki generation model and expected digest must be configured together."
+            )
         return self
 
     ingestion_stream_name: str = Field(default="openwikirag:ingestion", min_length=1)
