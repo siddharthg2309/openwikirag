@@ -48,8 +48,6 @@ Quiz topics from the original checkpoint: learner partially answered and explici
 4. Trade-off: defend the choice above against one rejected alternative. When would you change it?
 5. Interview: explain this slice in two sentences, naming its proof and one limitation. What can you honestly claim today?
 
-Learner answers: pending.
-
 ## Slice 6.5 — Canonical evidence resolution
 
 Status: unanswered; pause overridden through Phase 9.
@@ -1859,3 +1857,35 @@ References: D-060, F-059, `apps/api/app/conversation_routes.py`, `apps/api/tests
 Learner answers: pending.
 
 Verification: the opt-in two-process HTTP test passed (`1 passed in 6.40s`). Route-level conversation recovery is verified; the quiz and independent learner explanation remain pending.
+
+## Phase 11, Slice 11.1 — Request correlation and redacted API logs
+
+Status: unanswered; this Phase 11 Q&A gate is active.
+Objective: attach a bounded request id to every HTTP request and produce structured access events that are useful for debugging without exposing sensitive request data.
+Explanation: Middleware is the narrowest place to apply a rule to every API route. It validates a caller-provided correlation id or generates one, makes the normalized value visible to existing audit code, binds it to structlog for the request lifetime, returns it to the client, and logs only low-cardinality request metadata. The context is cleared in `finally`, so one request’s id cannot leak into another request handled by the same process.
+
+```text
+HTTP scope
+  -> safe incoming id or generated UUID
+  -> structlog context + normalized route header
+  -> FastAPI route/audit code
+  -> response X-Request-ID
+  -> structured method/path/status/duration event
+  -> context cleanup
+```
+
+Failure branches: malformed or oversized ids are replaced; route exceptions are logged and re-raised; logging must not alter the response; request bodies, query text, authorization headers, and secrets are never included in the event.
+
+Trade-off: a valid caller can select an id, so it correlates work but does not prove identity. Middleware gives complete route coverage, while later slices must add trace spans, metrics, worker propagation, sampling, and cardinality controls.
+
+References: D-061, F-060, `apps/api/app/observability.py`, `apps/api/tests/test_observability.py`.
+
+1. Why should request correlation be implemented at middleware rather than independently in each route?
+2. Trace the id from the incoming scope through the route, response header, audit path, and log event.
+3. What happens when the caller sends a newline, oversized, or otherwise invalid id?
+4. Why are path/status/duration safe enough for this event while query text and request bodies are not?
+5. Explain the difference between a correlation id and an authentication credential, and name one later observability gap.
+
+Learner answers: pending.
+
+Verification: focused observability tests passed (`3 passed`), including invalid-id replacement, response propagation, query redaction, and exception-message redaction. Full offline regression passed (`372 passed, 19 skipped, 1 warning in 16.13s`); Ruff and mypy passed. Q&A remains unanswered before the next slice.

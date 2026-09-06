@@ -345,3 +345,13 @@ starts two separate Uvicorn processes and reads the same private conversation ov
 HTTP before and after restart. See [the acceptance ledger](docs/PHASE_9_ACCEPTANCE.md)
 and [the learning checkpoints](learning-checkpoints.md); all quizzes were explicitly
 deferred by the learner and remain unanswered.
+
+### Phase 11.1: request correlation and safe API logs
+
+Every HTTP request receives a bounded `X-Request-ID` (generated when the incoming
+value is unsafe), and the API returns the same id while emitting structured JSON
+access events with method, path, status, duration, and outcome. Query strings,
+bodies, tokens, and exception messages are excluded from these events. This is the
+observability foundation; Prometheus metrics, OpenTelemetry spans, security audit,
+document end-to-end demonstration, and performance/load measurements are subsequent
+Phase 11 slices.

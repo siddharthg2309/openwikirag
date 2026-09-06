@@ -23,14 +23,16 @@ they are not evidence of production scale or universal security.
 ## Current verified snapshot
 
 Last updated: 2026-09-06
-Current verified slice: Phase 9 final acceptance audit — Slice 9.5.
-Latest full service-enabled run: 385 passed, 3 opt-in skips (2 model smokes and 1
-process-restart probe), 1 known local-Qdrant warning in 27.13 seconds. PostgreSQL,
-Redis, Qdrant and Neo4j integrations enabled; strict typing passed with 0 issues
-across 142 files. Older rows below are historical slice evidence.
+Current verified slice: Phase 11, Slice 11.1 — request correlation and redacted API logs.
+Latest full offline run: 372 passed, 19 skips, 1 known local-Qdrant warning in 16.13
+seconds. Strict typing passed with 0 issues across 144 files; the latest service-enabled
+Phase 9 run remains recorded in the Phase 9 section. Older rows below are historical
+slice evidence.
 
 | Area | Metric | Current value | Status | Evidence |
 | --- | --- | ---: | --- | --- |
+| Automated tests | Phase 11 Slice 11.1 offline regression | 372 passed, 19 skipped, 1 known warning in 16.13s | verified | `uv run --no-sync pytest -o addopts='' -q` |
+| Static quality | Phase 11 Slice 11.1 typing | 0 issues across 144 files | verified | `uv run --no-sync mypy src apps` |
 | Automated tests | Phase 9 final service-enabled suite | 385 passed, 3 opt-in skips, 1 known warning in 27.13s | verified | `OPENWIKIRAG_TEST_POSTGRES_URL=... OPENWIKIRAG_TEST_QDRANT_URL=http://127.0.0.1:6333 OPENWIKIRAG_TEST_NEO4J_URI=bolt://127.0.0.1:27687 OPENWIKIRAG_TEST_REDIS_URL=redis://127.0.0.1:26379/0 uv run --no-sync pytest -o addopts='' -q` |
 | Integration | Conversation route after API process restart | 1 passed in 7.04s | verified | `OPENWIKIRAG_TEST_API_RESTART=1 ... uv run --no-sync pytest -o addopts='' -q apps/api/tests/test_api_process_restart.py` |
 | Static quality | Strict typing | 0 issues across 142 files | verified | `uv run --no-sync mypy src apps` |
@@ -146,6 +148,16 @@ across 142 files. Older rows below are historical slice evidence.
 The current suite count includes the PostgreSQL integration test only when its
 environment variable is supplied. The normal local command skips that test.
 The existing Starlette/httpx deprecation warning is not counted as a failure.
+
+## Phase 11, Slice 11.1 — request correlation and redacted API logs (2026-09-06)
+
+Focused observability tests: 3 passed. The API middleware accepts only bounded
+log-safe request ids, generates a UUID otherwise, exposes the normalized id to
+routes and clients, and emits structured completion/failure events without query
+strings, bodies, authorization values, or exception messages. Full offline suite:
+372 passed, 19 skipped, 1 known local-Qdrant warning in 16.13 seconds. Ruff passed;
+mypy reported 0 issues across 144 files. This proves correlation and redaction,
+not distributed trace propagation, metrics, production sampling, or throughput.
 
 ## Numbers that are not measured yet
 
