@@ -13,6 +13,7 @@ from openwikirag.core.metrics import DEFAULT_METRICS
 from openwikirag.core.tracing import configure_tracing
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.security.authorization import Principal, Role
+from openwikirag.security.rate_limit import RedisFixedWindowLimiter
 
 from .answer_routes import router as answer_router
 from .auth_routes import router as auth_router
@@ -22,6 +23,7 @@ from .dependencies import get_current_principal, get_session
 from .document_routes import router as document_router
 from .job_routes import router as job_router
 from .observability import RequestContextMiddleware
+from .rate_limit import AuthRateLimitMiddleware
 from .request_limits import RequestSizeLimitMiddleware
 from .search_routes import router as search_router
 from .wiki_routes import router as wiki_router
@@ -43,6 +45,17 @@ app.include_router(search_router)
 app.include_router(answer_router)
 app.include_router(conversation_router)
 app.include_router(memory_router)
+auth_rate_limiter = (
+    RedisFixedWindowLimiter.from_url(settings.redis_url)
+    if settings.auth_rate_limit_enabled
+    else None
+)
+app.add_middleware(
+    AuthRateLimitMiddleware,
+    limiter=auth_rate_limiter,
+    limit=settings.auth_rate_limit_requests,
+    window_seconds=settings.auth_rate_limit_window_seconds,
+)
 app.add_middleware(RequestSizeLimitMiddleware, max_request_bytes=settings.max_request_bytes)
 app.add_middleware(RequestContextMiddleware)
 

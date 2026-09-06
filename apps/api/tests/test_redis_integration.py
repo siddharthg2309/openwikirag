@@ -5,6 +5,7 @@ import pytest
 from redis.asyncio import Redis
 
 from openwikirag.infrastructure.streams import RedisStreamPublisher
+from openwikirag.security.rate_limit import RedisFixedWindowLimiter
 
 
 @pytest.mark.asyncio
@@ -74,3 +75,36 @@ async def test_real_redis_consumer_group_reads_and_acknowledges() -> None:
         await client.aclose()
 
     assert pending["pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_real_redis_rate_limiter_shares_one_fixed_window() -> None:
+    redis_url = os.environ.get("OPENWIKIRAG_TEST_REDIS_URL")
+    if not redis_url:
+        pytest.skip("Set OPENWIKIRAG_TEST_REDIS_URL to run Redis integration tests.")
+
+    redis = Redis.from_url(redis_url, decode_responses=True)
+    limiter = RedisFixedWindowLimiter(redis)
+    peer = f"integration-{uuid4()}"
+    key = limiter.key(route="/api/v1/auth/token", peer=peer)
+    try:
+        first = await limiter.check(
+            route="/api/v1/auth/token",
+            peer=peer,
+            limit=1,
+            window_seconds=30,
+        )
+        second = await limiter.check(
+            route="/api/v1/auth/token",
+            peer=peer,
+            limit=1,
+            window_seconds=30,
+        )
+    finally:
+        await redis.delete(key)
+        await redis.aclose()
+
+    assert first.allowed
+    assert first.remaining == 0
+    assert not second.allowed
+    assert second.retry_after_seconds >= 1

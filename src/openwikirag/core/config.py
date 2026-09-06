@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     object_store_root: str = Field(default=".data/objects", min_length=1)
     max_upload_bytes: int = Field(default=25 * 1024 * 1024, ge=1, le=250 * 1024 * 1024)
     max_request_bytes: int = Field(default=32 * 1024 * 1024, ge=1, le=300 * 1024 * 1024)
+    auth_rate_limit_enabled: bool = False
+    auth_rate_limit_requests: int = Field(default=10, ge=1, le=10_000)
+    auth_rate_limit_window_seconds: int = Field(default=60, ge=1, le=3_600)
     redis_url: str = Field(default="redis://127.0.0.1:6379/0", min_length=1)
     qdrant_url: str = Field(default="http://127.0.0.1:6333", min_length=1)
     qdrant_api_key: str | None = None
