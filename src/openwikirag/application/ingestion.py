@@ -8,6 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 import structlog
+from opentelemetry.trace import SpanKind, Tracer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from openwikirag.core.metrics import (
@@ -16,6 +17,14 @@ from openwikirag.core.metrics import (
     INGESTION_MESSAGES_TOTAL,
     MetricsError,
     MetricsRegistry,
+)
+from openwikirag.core.tracing import (
+    extract_trace_context,
+    get_tracer,
+    mark_span_error,
+    safe_span,
+    set_span_attribute,
+    span_trace_fields,
 )
 from openwikirag.infrastructure.models import IngestionJob
 from openwikirag.infrastructure.repositories.jobs import (
@@ -204,6 +213,7 @@ class IngestionConsumerService:
         batch_size: int = 10,
         block_ms: int = 100,
         metrics: MetricsRegistry | None = None,
+        tracer: Tracer | None = None,
     ) -> None:
         self._session = session
         self._transport = transport
@@ -219,6 +229,7 @@ class IngestionConsumerService:
         self._block_ms = block_ms
         self._jobs = JobRepository(session)
         self._metrics = metrics or DEFAULT_METRICS
+        self._tracer = tracer or get_tracer()
 
     async def ensure_group(self) -> None:
         await self._transport.ensure_group(
@@ -253,20 +264,37 @@ class IngestionConsumerService:
     async def _handle_message(self, message: StreamMessage) -> None:
         started = time.perf_counter()
         outcome = "error"
-        try:
-            outcome = await self._handle_message_inner(message)
-        finally:
-            metric_outcome = outcome if outcome in _METRIC_OUTCOMES else "error"
-            try:
-                labels = {"outcome": metric_outcome}
-                self._metrics.increment(INGESTION_MESSAGES_TOTAL, labels=labels)
-                self._metrics.observe(
-                    INGESTION_MESSAGE_DURATION_SECONDS,
-                    max(time.perf_counter() - started, 0.0),
-                    labels=labels,
-                )
-            except MetricsError:
-                logger.warning("ingestion_metrics_record_failed")
+        parent_context = extract_trace_context(message.fields.get("traceparent"))
+        event_type = message.fields.get("event_type")
+        safe_event_type = event_type if event_type in INGESTION_EVENT_JOB_TYPES else "unknown"
+        with safe_span(
+            self._tracer,
+            "job.consume",
+            context=parent_context,
+            kind=SpanKind.CONSUMER,
+        ) as span:
+            set_span_attribute(span, "messaging.system", "redis")
+            set_span_attribute(span, "messaging.operation", "process")
+            set_span_attribute(span, "event.type", safe_event_type)
+            with structlog.contextvars.bound_contextvars(**span_trace_fields(span)):
+                try:
+                    outcome = await self._handle_message_inner(message)
+                except BaseException as exc:
+                    mark_span_error(span, exc)
+                    raise
+                finally:
+                    metric_outcome = outcome if outcome in _METRIC_OUTCOMES else "error"
+                    set_span_attribute(span, "job.outcome", metric_outcome)
+                    try:
+                        labels = {"outcome": metric_outcome}
+                        self._metrics.increment(INGESTION_MESSAGES_TOTAL, labels=labels)
+                        self._metrics.observe(
+                            INGESTION_MESSAGE_DURATION_SECONDS,
+                            max(time.perf_counter() - started, 0.0),
+                            labels=labels,
+                        )
+                    except MetricsError:
+                        logger.warning("ingestion_metrics_record_failed")
 
     async def _handle_message_inner(self, message: StreamMessage) -> str:
         try:

@@ -12,6 +12,7 @@ from openwikirag.application.ingestion import (
     PermanentJobError,
 )
 from openwikirag.application.wiki_ingestion import WikiIngestionHandler
+from openwikirag.core.tracing import current_traceparent
 from openwikirag.infrastructure.models import IngestionJob
 from openwikirag.infrastructure.repositories.jobs import JobRepository
 from openwikirag.infrastructure.repositories.outbox import OutboxRepository
@@ -85,6 +86,7 @@ class WikiPageRegenerationRequestService:
                     "page_artifact_id": str(page.id),
                     "source_page_checksum": page.page_checksum,
                 },
+                traceparent=current_traceparent(),
             )
         except Exception as exc:
             await self._session.rollback()

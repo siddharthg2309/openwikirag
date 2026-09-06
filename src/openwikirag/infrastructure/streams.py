@@ -6,6 +6,7 @@ from typing import Protocol
 
 from redis.asyncio import Redis
 from redis.exceptions import ResponseError
+from redis.typing import FieldT
 
 
 class StreamPublisher(Protocol):
@@ -20,6 +21,7 @@ class StreamPublisher(Protocol):
         tenant_id: str,
         aggregate_id: str,
         payload: dict[str, object],
+        traceparent: str | None = None,
     ) -> str:
         """Append an event and return the Redis stream message id."""
 
@@ -96,17 +98,18 @@ class RedisStreamPublisher:
         tenant_id: str,
         aggregate_id: str,
         payload: dict[str, object],
+        traceparent: str | None = None,
     ) -> str:
-        message_id = await self._client.xadd(
-            stream_name,
-            {
-                "event_id": event_id,
-                "event_type": event_type,
-                "tenant_id": tenant_id,
-                "aggregate_id": aggregate_id,
-                "payload": json.dumps(payload, separators=(",", ":"), sort_keys=True),
-            },
-        )
+        fields: dict[FieldT, FieldT] = {
+            "event_id": event_id,
+            "event_type": event_type,
+            "tenant_id": tenant_id,
+            "aggregate_id": aggregate_id,
+            "payload": json.dumps(payload, separators=(",", ":"), sort_keys=True),
+        }
+        if traceparent is not None:
+            fields["traceparent"] = traceparent
+        message_id = await self._client.xadd(stream_name, fields)
         return str(message_id)
 
     async def ensure_group(self, *, stream_name: str, group_name: str) -> None:

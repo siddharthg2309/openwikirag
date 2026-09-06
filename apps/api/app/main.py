@@ -10,6 +10,7 @@ from openwikirag import __version__
 from openwikirag.core.config import get_settings
 from openwikirag.core.logging import configure_logging
 from openwikirag.core.metrics import DEFAULT_METRICS
+from openwikirag.core.tracing import configure_tracing
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.security.authorization import Principal, Role
 
@@ -26,6 +27,7 @@ from .wiki_routes import router as wiki_router
 
 settings = get_settings()
 configure_logging(settings.log_level)
+configure_tracing(service_name="openwikirag-api")
 
 app = FastAPI(
     title="OpenWikiRAG API",

@@ -28,11 +28,21 @@ def configure_logging(level: str) -> None:
     )
 
 
-def set_request_context(request_id: str) -> None:
-    """Bind request-local fields used by every structured log in the request."""
+def set_request_context(
+    request_id: str,
+    *,
+    trace_id: str | None = None,
+    span_id: str | None = None,
+) -> None:
+    """Bind request-local correlation and safe trace fields to structured logs."""
 
     structlog.contextvars.clear_contextvars()
-    structlog.contextvars.bind_contextvars(request_id=request_id)
+    fields: dict[str, str] = {"request_id": request_id}
+    if trace_id is not None:
+        fields["trace_id"] = trace_id
+    if span_id is not None:
+        fields["span_id"] = span_id
+    structlog.contextvars.bind_contextvars(**fields)
 
 
 def clear_request_context() -> None:

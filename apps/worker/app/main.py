@@ -31,6 +31,7 @@ from openwikirag.application.wiki_regeneration import WikiJobRouter, WikiRegener
 from openwikirag.application.worker import WorkerLoop
 from openwikirag.core.config import Settings, get_settings
 from openwikirag.core.logging import configure_logging
+from openwikirag.core.tracing import configure_tracing
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.neo4j import Neo4jProjection
 from openwikirag.infrastructure.qdrant import QdrantCollectionConfig, QdrantVectorIndex
@@ -69,6 +70,7 @@ def build_extractor_registry(settings: Settings) -> ExtractorRegistry:
 async def run_worker(*, stop_event: asyncio.Event | None = None, once: bool = False) -> None:
     settings = get_settings()
     configure_logging(settings.log_level)
+    configure_tracing(service_name="openwikirag-worker")
     logger = structlog.get_logger(service="openwikirag-worker")
     engine = create_database_engine(settings.database_url)
     session_factory = create_session_factory(engine)

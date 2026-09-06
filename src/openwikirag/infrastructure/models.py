@@ -709,6 +709,7 @@ class OutboxEvent(Base):
         JSON().with_variant(JSONB(), "postgresql"),
         nullable=False,
     )
+    traceparent: Mapped[str | None] = mapped_column(String(128), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("CURRENT_TIMESTAMP")
     )

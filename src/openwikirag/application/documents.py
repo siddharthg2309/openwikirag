@@ -12,6 +12,7 @@ from uuid import UUID, uuid4
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from openwikirag.core.tracing import current_traceparent
 from openwikirag.infrastructure.repositories.audit import AuditRepository
 from openwikirag.infrastructure.repositories.documents import (
     DocumentIntegrityError,
@@ -296,6 +297,7 @@ class DocumentUploadService:
                     "checksum_sha256": validated.checksum_sha256,
                     "pipeline_version": created.version.pipeline_version,
                 },
+                traceparent=current_traceparent(),
             )
             await self._audit.record(
                 action="document.upload",

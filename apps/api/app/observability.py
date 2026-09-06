@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from uuid import uuid4
 
 import structlog
+from opentelemetry.trace import SpanKind, Tracer
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from openwikirag.core.logging import clear_request_context, set_request_context
@@ -15,6 +16,15 @@ from openwikirag.core.metrics import (
     HTTP_REQUESTS_TOTAL,
     MetricsError,
     MetricsRegistry,
+)
+from openwikirag.core.tracing import (
+    extract_trace_context,
+    get_tracer,
+    inject_traceparent,
+    mark_span_error,
+    safe_span,
+    set_span_attribute,
+    span_trace_fields,
 )
 
 logger = structlog.get_logger("openwikirag.api")
@@ -76,13 +86,15 @@ def _replace_request_id(scope: Scope, request_id: str) -> Scope:
     return {**scope, "headers": headers}
 
 
-def _response_headers(message: Message, request_id: str) -> Message:
+def _response_headers(message: Message, request_id: str, traceparent: str | None) -> Message:
     headers = [
         (key, value)
         for key, value in message.get("headers", [])
-        if key.lower() != b"x-request-id"
+        if key.lower() not in {b"x-request-id", b"traceparent"}
     ]
     headers.append((b"x-request-id", request_id.encode("ascii")))
+    if traceparent is not None:
+        headers.append((b"traceparent", traceparent.encode("ascii")))
     return {**message, "headers": headers}
 
 
@@ -113,71 +125,91 @@ def _metric_status_class(status_code: int) -> str:
 class RequestContextMiddleware:
     """Bind one safe request id for the complete lifetime of an HTTP request."""
 
-    def __init__(self, app: ASGIApp, metrics: MetricsRegistry | None = None) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        metrics: MetricsRegistry | None = None,
+        tracer: Tracer | None = None,
+    ) -> None:
         self.app = app
         self._metrics = metrics or DEFAULT_METRICS
+        self._tracer = tracer or get_tracer()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
 
-        request_id = normalize_request_id(
-            _header_value(scope.get("headers", []), b"x-request-id")
+        parent_context = extract_trace_context(
+            _header_value(scope.get("headers", []), b"traceparent")
         )
-        scoped = _replace_request_id(scope, request_id)
-        set_request_context(request_id)
-        started = time.perf_counter()
-        status_code = 500
-
-        async def send_with_request_id(message: Message) -> None:
-            nonlocal status_code
-            if message.get("type") == "http.response.start":
-                status_code = int(message.get("status", 500))
-                message = _response_headers(message, request_id)
-            await send(message)
-
-        try:
-            await self.app(scoped, receive, send_with_request_id)
-        except Exception as exc:
-            logger.error(
-                "http_request_failed",
-                method=scope.get("method", ""),
-                path=scope.get("path", ""),
-                status_code=status_code,
-                duration_ms=round((time.perf_counter() - started) * 1000, 3),
-                outcome="failure",
-                error_type=type(exc).__name__,
+        with safe_span(
+            self._tracer,
+            "http.request",
+            context=parent_context,
+            kind=SpanKind.SERVER,
+        ) as span:
+            request_id = normalize_request_id(
+                _header_value(scope.get("headers", []), b"x-request-id")
             )
-            raise
-        else:
-            logger.info(
-                "http_request_completed",
-                method=scope.get("method", ""),
-                path=scope.get("path", ""),
-                status_code=status_code,
-                duration_ms=round((time.perf_counter() - started) * 1000, 3),
-                outcome="success" if status_code < 500 else "failure",
-            )
-        finally:
-            duration_seconds = max(time.perf_counter() - started, 0.0)
+            traceparent = inject_traceparent()
+            scoped = _replace_request_id(scope, request_id)
+            set_request_context(request_id, **span_trace_fields(span))
+            started = time.perf_counter()
+            status_code = 500
+
+            async def send_with_request_context(message: Message) -> None:
+                nonlocal status_code
+                if message.get("type") == "http.response.start":
+                    status_code = int(message.get("status", 500))
+                    message = _response_headers(message, request_id, traceparent)
+                await send(message)
+
             try:
-                self._metrics.increment(
-                    HTTP_REQUESTS_TOTAL,
-                    labels={
-                        "route": _metric_route(scoped),
-                        "method": _metric_method(scoped),
-                        "status_class": _metric_status_class(status_code),
-                    },
+                await self.app(scoped, receive, send_with_request_context)
+            except Exception as exc:
+                mark_span_error(span, exc)
+                logger.error(
+                    "http_request_failed",
+                    method=scope.get("method", ""),
+                    path=scope.get("path", ""),
+                    status_code=status_code,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 3),
+                    outcome="failure",
+                    error_type=type(exc).__name__,
                 )
-                self._metrics.observe(
-                    HTTP_REQUEST_DURATION_SECONDS,
-                    duration_seconds,
-                    labels={
-                        "route": _metric_route(scoped),
-                        "method": _metric_method(scoped),
-                    },
+                raise
+            else:
+                logger.info(
+                    "http_request_completed",
+                    method=scope.get("method", ""),
+                    path=scope.get("path", ""),
+                    status_code=status_code,
+                    duration_ms=round((time.perf_counter() - started) * 1000, 3),
+                    outcome="success" if status_code < 500 else "failure",
                 )
-            except MetricsError:
-                logger.warning("http_metrics_record_failed")
-            clear_request_context()
+            finally:
+                set_span_attribute(span, "http.request.method", _metric_method(scoped))
+                set_span_attribute(span, "http.route", _metric_route(scoped))
+                set_span_attribute(span, "http.response.status_code", status_code)
+                duration_seconds = max(time.perf_counter() - started, 0.0)
+                try:
+                    self._metrics.increment(
+                        HTTP_REQUESTS_TOTAL,
+                        labels={
+                            "route": _metric_route(scoped),
+                            "method": _metric_method(scoped),
+                            "status_class": _metric_status_class(status_code),
+                        },
+                    )
+                    self._metrics.observe(
+                        HTTP_REQUEST_DURATION_SECONDS,
+                        duration_seconds,
+                        labels={
+                            "route": _metric_route(scoped),
+                            "method": _metric_method(scoped),
+                        },
+                    )
+                except MetricsError:
+                    logger.warning("http_metrics_record_failed")
+                clear_request_context()

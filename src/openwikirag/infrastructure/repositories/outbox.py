@@ -23,6 +23,7 @@ class OutboxRepository:
         aggregate_id: str,
         event_type: str,
         payload: dict[str, object],
+        traceparent: str | None = None,
         occurred_at: datetime | None = None,
     ) -> OutboxEvent:
         event = OutboxEvent(
@@ -31,6 +32,7 @@ class OutboxRepository:
             aggregate_id=aggregate_id,
             event_type=event_type,
             payload_json=payload,
+            traceparent=traceparent,
         )
         if occurred_at is not None:
             event.occurred_at = occurred_at

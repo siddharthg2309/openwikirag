@@ -5,10 +5,14 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
+from apps.api.tests.test_tracing import RecordingSpanExporter
 from openwikirag.application.outbox import OutboxPublisherService
+from openwikirag.core.tracing import current_traceparent
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import Base, OutboxEvent, Tenant
 from openwikirag.infrastructure.repositories.outbox import OutboxRepository
@@ -41,6 +45,7 @@ class RecordingPublisher:
         tenant_id: str,
         aggregate_id: str,
         payload: dict[str, object],
+        traceparent: str | None = None,
     ) -> str:
         message = {
             "stream_name": stream_name,
@@ -49,6 +54,7 @@ class RecordingPublisher:
             "tenant_id": tenant_id,
             "aggregate_id": aggregate_id,
             "payload": payload,
+            "traceparent": traceparent,
         }
         self.messages.append(message)
         return f"{len(self.messages)}-0"
@@ -64,11 +70,16 @@ class FailingPublisher:
         tenant_id: str,
         aggregate_id: str,
         payload: dict[str, object],
+        traceparent: str | None = None,
     ) -> str:
         raise ConnectionError("Redis is unavailable")
 
 
-async def create_pending_event(session: AsyncSession) -> OutboxEvent:
+async def create_pending_event(
+    session: AsyncSession,
+    *,
+    traceparent: str | None = None,
+) -> OutboxEvent:
     tenant = Tenant(name="Outbox Tenant")
     session.add(tenant)
     await session.flush()
@@ -78,9 +89,40 @@ async def create_pending_event(session: AsyncSession) -> OutboxEvent:
         aggregate_id=str(uuid4()),
         event_type="document.ingestion.requested",
         payload={"document_id": str(uuid4()), "document_version_id": str(uuid4())},
+        traceparent=traceparent,
     )
     await session.commit()
     return event
+
+
+async def test_relay_propagates_trace_context_to_stream_and_child_span(
+    session: AsyncSession,
+) -> None:
+    provider = TracerProvider()
+    exporter = RecordingSpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("test")
+
+    with tracer.start_as_current_span("http.request") as request_span:
+        event = await create_pending_event(session, traceparent=current_traceparent())
+
+    publisher = RecordingPublisher()
+    service = OutboxPublisherService(
+        session,
+        publisher,
+        stream_name="openwikirag:test-ingestion",
+        tracer=tracer,
+    )
+    assert len(await service.publish_pending(limit=10)) == 1
+
+    publish_span = next(span for span in exporter.spans if span.name == "job.publish")
+    assert publish_span.parent is not None
+    assert publish_span.parent.span_id == request_span.get_span_context().span_id
+    assert publisher.messages[0]["traceparent"] is not None
+    assert publisher.messages[0]["traceparent"].startswith(
+        f"00-{request_span.get_span_context().trace_id:032x}-"
+    )
+    assert event.traceparent is not None
 
 
 async def test_publisher_marks_event_only_after_stream_ack(session: AsyncSession) -> None:

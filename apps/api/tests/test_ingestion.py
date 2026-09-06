@@ -8,6 +8,13 @@ from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import (
+    SimpleSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+)
+from opentelemetry.trace import Tracer
 from pypdf import PdfWriter
 from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from sqlalchemy import func, select
@@ -40,6 +47,7 @@ from openwikirag.application.wiki_regeneration import (
     WikiRegenerationHandler,
 )
 from openwikirag.core.metrics import DEFAULT_METRICS, MetricsRegistry
+from openwikirag.core.tracing import current_traceparent
 from openwikirag.infrastructure.database import create_database_engine, create_session_factory
 from openwikirag.infrastructure.models import (
     Base,
@@ -54,6 +62,15 @@ from openwikirag.infrastructure.models import (
 )
 from openwikirag.infrastructure.storage import LocalObjectStorage, ObjectStorageError
 from openwikirag.infrastructure.streams import StreamMessage
+
+
+class RecordingSpanExporter(SpanExporter):
+    def __init__(self) -> None:
+        self.spans: list[ReadableSpan] = []
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        self.spans.extend(spans)
+        return SpanExportResult.SUCCESS
 
 
 @pytest.fixture
@@ -87,6 +104,7 @@ class FakeTransport:
         tenant_id: str,
         aggregate_id: str,
         payload: dict[str, object],
+        traceparent: str | None = None,
     ) -> str:
         raise AssertionError("The consumer should not publish normal events.")
 
@@ -281,21 +299,25 @@ def make_message(
     message_id: str = "1-0",
     payload: dict[str, object] | None = None,
     event_type: str = "document.ingestion.requested",
+    traceparent: str | None = None,
 ) -> StreamMessage:
     event_payload = payload or {
         "document_id": str(uuid4()),
         "document_version_id": str(uuid4()),
         "ingestion_job_id": str(job_id),
     }
+    fields = {
+        "event_id": str(uuid4()),
+        "event_type": event_type,
+        "tenant_id": str(tenant_id),
+        "aggregate_id": str(job_id),
+        "payload": json.dumps(event_payload),
+    }
+    if traceparent is not None:
+        fields["traceparent"] = traceparent
     return StreamMessage(
         message_id=message_id,
-        fields={
-            "event_id": str(uuid4()),
-            "event_type": event_type,
-            "tenant_id": str(tenant_id),
-            "aggregate_id": str(job_id),
-            "payload": json.dumps(event_payload),
-        },
+        fields=fields,
     )
 
 
@@ -306,6 +328,7 @@ def make_service(
     *,
     lease_seconds: int = 60,
     metrics: MetricsRegistry | None = None,
+    tracer: Tracer | None = None,
 ) -> IngestionConsumerService:
     return IngestionConsumerService(
         session,
@@ -321,6 +344,7 @@ def make_service(
         batch_size=10,
         block_ms=1,
         metrics=metrics,
+        tracer=tracer,
     )
 
 
@@ -348,6 +372,40 @@ async def test_successful_ingestion_records_bounded_metrics(session: AsyncSessio
         )
     finally:
         DEFAULT_METRICS.reset()
+
+
+async def test_consumer_creates_child_span_from_stream_trace_context(
+    session: AsyncSession,
+) -> None:
+    tenant, job = await create_job(session)
+    provider = TracerProvider()
+    exporter = RecordingSpanExporter()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    tracer = provider.get_tracer("test")
+
+    with tracer.start_as_current_span("http.request") as request_span:
+        traceparent = current_traceparent()
+    assert traceparent is not None
+
+    transport = FakeTransport()
+    transport.new_messages.append(
+        make_message(tenant.id, job.id, traceparent=traceparent)
+    )
+    service = make_service(
+        session,
+        transport,
+        RecordingHandler(),
+        tracer=tracer,
+    )
+
+    assert await service.consume_once() == 1
+
+    consume_span = next(span for span in exporter.spans if span.name == "job.consume")
+    assert consume_span.parent is not None
+    assert consume_span.parent.span_id == request_span.get_span_context().span_id
+    assert consume_span.context.trace_id == request_span.get_span_context().trace_id
+    assert consume_span.attributes is not None
+    assert consume_span.attributes["job.outcome"] == "succeeded"
 
 
 async def create_job_with_source(
