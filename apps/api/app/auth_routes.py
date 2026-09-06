@@ -58,7 +58,7 @@ class TokenResponse(BaseModel):
 
 
 def _ensure_local_auth_enabled() -> None:
-    if settings.environment != "development":
+    if settings.environment != "development" or settings.auth_mode != "local":
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Local authentication is disabled outside development.",

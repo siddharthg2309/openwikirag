@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     )
     jwt_issuer: str = Field(default="openwikirag-local", min_length=1)
     jwt_audience: str = Field(default="openwikirag-api", min_length=1)
+    auth_mode: Literal["local", "oidc"] = "local"
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_url: str = ""
+    oidc_algorithms: str = Field(default="RS256", min_length=1)
+    oidc_tenant_claim: str = Field(default="tenant_id", min_length=1, max_length=128)
+    oidc_jwks_cache_seconds: int = Field(default=300, ge=30, le=86_400)
+    oidc_jwks_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
     access_token_ttl_seconds: int = Field(default=900, ge=60, le=3600)
     refresh_token_ttl_days: int = Field(default=30, ge=1, le=90)
     object_store_root: str = Field(default=".data/objects", min_length=1)
@@ -88,7 +96,40 @@ class Settings(BaseSettings):
             raise ValueError(
                 "Dense embedding model and expected digest must be configured together."
             )
+        algorithms = self.oidc_algorithm_list
+        supported = {
+            "RS256",
+            "RS384",
+            "RS512",
+            "PS256",
+            "PS384",
+            "PS512",
+            "ES256",
+            "ES384",
+            "ES512",
+            "EdDSA",
+        }
+        if self.auth_mode == "oidc":
+            if not self.oidc_issuer.strip() or not self.oidc_audience.strip():
+                raise ValueError("OIDC issuer and audience are required in OIDC mode.")
+            if not self.oidc_jwks_url.strip():
+                raise ValueError("OIDC JWKS URL is required in OIDC mode.")
+            if not algorithms or any(item not in supported for item in algorithms):
+                raise ValueError("OIDC algorithms must be configured asymmetric JWT algorithms.")
+            if (
+                self.environment.casefold() in {"production", "prod"}
+                and not self.oidc_jwks_url.startswith("https://")
+            ):
+                raise ValueError("Production OIDC JWKS URL must use HTTPS.")
+        elif self.environment.casefold() in {"production", "prod"}:
+            raise ValueError("Production authentication requires OIDC mode.")
         return self
+
+    @property
+    def oidc_algorithm_list(self) -> tuple[str, ...]:
+        """Return normalized OIDC algorithms from the comma-separated setting."""
+
+        return tuple(item.strip() for item in self.oidc_algorithms.split(",") if item.strip())
 
     ingestion_stream_name: str = Field(default="openwikirag:ingestion", min_length=1)
     outbox_batch_size: int = Field(default=100, ge=1, le=1000)

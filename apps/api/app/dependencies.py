@@ -1,5 +1,6 @@
 """FastAPI dependencies that compose authentication with infrastructure."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Annotated
@@ -8,7 +9,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from openwikirag.core.config import get_settings
+from openwikirag.core.config import Settings, get_settings
 from openwikirag.infrastructure.database import (
     create_database_engine,
     create_session_factory,
@@ -16,18 +17,41 @@ from openwikirag.infrastructure.database import (
 )
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
 from openwikirag.infrastructure.storage import LocalObjectStorage, ObjectStorage
-from openwikirag.security.authentication import InvalidAccessTokenError, JWTAuthenticator
+from openwikirag.security.authentication import (
+    AccessTokenProvider,
+    InvalidAccessTokenError,
+    JWTAuthenticator,
+    OIDCAuthenticator,
+)
 from openwikirag.security.authorization import Principal
 
 settings = get_settings()
 database_engine = create_database_engine(settings.database_url)
 session_factory = create_session_factory(database_engine)
 bearer_scheme = HTTPBearer(auto_error=False)
-authenticator = JWTAuthenticator(
-    secret=settings.jwt_secret,
-    issuer=settings.jwt_issuer,
-    audience=settings.jwt_audience,
-)
+
+
+def build_authenticator(current_settings: Settings = settings) -> AccessTokenProvider:
+    """Build the configured token verifier once at process startup."""
+
+    if current_settings.auth_mode == "oidc":
+        return OIDCAuthenticator(
+            jwks_url=current_settings.oidc_jwks_url,
+            issuer=current_settings.oidc_issuer,
+            audience=current_settings.oidc_audience,
+            algorithms=current_settings.oidc_algorithm_list,
+            tenant_claim=current_settings.oidc_tenant_claim,
+            jwks_cache_seconds=current_settings.oidc_jwks_cache_seconds,
+            jwks_timeout_seconds=current_settings.oidc_jwks_timeout_seconds,
+        )
+    return JWTAuthenticator(
+        secret=current_settings.jwt_secret,
+        issuer=current_settings.jwt_issuer,
+        audience=current_settings.jwt_audience,
+    )
+
+
+authenticator = build_authenticator()
 object_storage = LocalObjectStorage(Path(settings.object_store_root))
 
 
@@ -65,7 +89,7 @@ async def get_current_principal(
         raise _unauthorized("Bearer authentication is required.")
 
     try:
-        claims = authenticator.verify(credentials.credentials)
+        claims = await asyncio.to_thread(authenticator.verify, credentials.credentials)
     except InvalidAccessTokenError as exc:
         raise _unauthorized("The access token is invalid.") from exc
 
