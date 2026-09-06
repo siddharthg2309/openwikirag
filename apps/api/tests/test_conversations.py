@@ -1,6 +1,7 @@
 """Conversation ownership, ordering, checksum and restart persistence."""
 
 import asyncio
+import hashlib
 from uuid import uuid4
 
 import pytest
@@ -20,7 +21,7 @@ from openwikirag.infrastructure.database import (
     create_session_factory,
     set_tenant_context,
 )
-from openwikirag.infrastructure.models import ConversationMessage
+from openwikirag.infrastructure.models import Conversation, ConversationMessage
 from openwikirag.infrastructure.repositories.identity import IdentityRepository
 from openwikirag.security.authorization import Principal, Role
 
@@ -91,3 +92,29 @@ async def test_real_postgres_history_survives_fresh_session_and_denies_admin_pee
                 await final_session.flush()
     finally:
         await engine.dispose()
+
+
+async def test_context_summary_respects_utf8_byte_boundary(
+    postgres_session: AsyncSession,
+) -> None:
+    repo = IdentityRepository(postgres_session)
+    suffix = uuid4().hex
+    tenant = await repo.create_tenant(f"context-boundary-{suffix}")
+    owner = await repo.create_user(f"context-owner-{suffix}@example.com")
+    await set_tenant_context(postgres_session, tenant.id)
+    await repo.add_membership(tenant.id, owner.id, Role.VIEWER)
+    await postgres_session.commit()
+
+    principal = Principal(str(owner.id), str(tenant.id), Role.VIEWER)
+    service = ConversationService(postgres_session, principal)
+    conversation = await service.create("Unicode boundary")
+    await service.append(conversation.id, "user", {"text": "界" * 1200})
+    summary = await service.context(conversation.id, ("language: हिन्दी",))
+    await postgres_session.commit()
+
+    assert len(summary.encode("utf-8")) <= 2_000
+    assert summary.encode("utf-8").decode("utf-8") == summary
+    stored = await postgres_session.get(Conversation, conversation.id)
+    assert stored is not None
+    assert stored.summary_text == summary
+    assert stored.summary_checksum == hashlib.sha256(summary.encode("utf-8")).hexdigest()

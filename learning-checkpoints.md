@@ -1779,6 +1779,40 @@ Evidence so far: PostgreSQL integration proved preservation before deadline and 
 5. How would you explain explicit memory consent and deletion guarantees in an interview?
 
 Learner answers: pending.
+
+## Slice 9.4 — UTF-8-bounded conversation context proof
+
+Status: unanswered; pause overridden through Phase 9.
+Objective: prove that bounded conversation context uses a hard 2,000-byte UTF-8 boundary that remains valid for multibyte text and is persisted with an integrity checksum.
+Explanation: A prompt/storage bound is measured in bytes, while a Unicode string is often reasoned about in characters. `utf8_prefix` encodes the candidate summary, keeps only the allowed bytes, and removes an incomplete final code point before decoding. `ConversationService.context` performs authorization and message validation first, selects the bounded history/preferences, persists the summary and checksum, and returns the same value. The test exercises the real PostgreSQL persistence path with multibyte content.
+
+```text
+owner request
+  -> ConversationService.context
+  -> lock active conversation
+  -> read/checksum validated messages
+  -> select six messages + five preferences
+  -> utf8_prefix(summary, 2,000 bytes)
+  -> persist summary/checksum/covered sequence
+  -> return valid UTF-8 context
+```
+
+Failure branches: foreign/deleted conversation is unavailable; malformed message or citation fails closed; the summary never returns invalid UTF-8 or exceeds the byte budget; a database failure rolls back the summary update.
+
+Trade-off: byte safety is proven, but this does not measure whether the selected six messages preserve the best semantic context. A future summarizer would need a separate quality and privacy evaluation while retaining this hard bound.
+
+References: D-059, F-058, `src/openwikirag/application/conversations.py`, `apps/api/tests/test_conversations.py`.
+
+1. Why is a UTF-8 byte limit different from a character limit?
+2. Trace `ConversationService.context` from authorization through the persisted checksum.
+3. What happens if truncation lands in the middle of a multibyte code point?
+4. What does this test prove, and what important behavior does it not prove?
+5. Explain this boundary in two interview sentences, including its privacy/reliability trade-off.
+
+Learner answers: pending.
+
+Verification: focused PostgreSQL test passed (`2 passed`). The hard UTF-8 byte boundary and checksum persistence are verified; the quiz and independent learner explanation remain pending.
+
 ### Slice 9.2 verification update
 
 379 tests passed with PostgreSQL/Qdrant/Neo4j enabled, four opt-in skips;139 source files typed. Memory fingerprints prevent using withdrawn preferences. Purge clears saved context and checkpoints before removing memory tombstones. Explain why owner-wide invalidation is conservative, why a tombstone remains during partial cleanup, and why deployment must schedule the purge CLI. All answers remain pending.
