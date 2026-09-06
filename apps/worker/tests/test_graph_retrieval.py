@@ -25,7 +25,6 @@ from openwikirag.application.knowledge import KnowledgeArtifact
 from openwikirag.application.retrieval import (
     CandidateRetrievalService,
     InMemoryCandidateIndex,
-    RetrievalInputError,
     SearchFilters,
     SearchRequest,
 )
@@ -191,28 +190,40 @@ async def test_live_neo4j_expansion_uses_canonical_connected_sources(
         await real_graph.clear(tenant_id=ctx.tenant_id, confirmed_tenant=ctx.tenant_id)
 
 
-async def test_graph_bounds_and_filter_combination_fail_before_traversal(
+async def test_graph_filters_apply_before_frontier_expansion(
     graph_context: GraphContext,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ctx = graph_context
-    neighbors = AsyncMock()
-    monkeypatch.setattr(ctx.graph, "neighbors", neighbors)
-    with pytest.raises(RetrievalInputError):
-        await ctx.service().search(
-            principal=ctx.principal,
-            graph_hops=1,
-            request=SearchRequest(
-                tenant_id=ctx.tenant_id,
-                query="Aurora",
-                filters=SearchFilters(document_version_ids=(ctx.versions[0],)),
-            ),
-        )
+    result = await ctx.service().search(
+        principal=ctx.principal,
+        graph_hops=2,
+        request=SearchRequest(
+            tenant_id=ctx.tenant_id,
+            query="Aurora",
+            mode="sparse",
+            filters=SearchFilters(document_version_ids=(ctx.versions[0], ctx.versions[1])),
+        ),
+    )
+    evidence_versions = {item.document_version_id for item in result.evidence}
+    assert ctx.versions[1] in evidence_versions
+    assert ctx.versions[2] not in evidence_versions
+
+    language_result = await ctx.service().search(
+        principal=ctx.principal,
+        graph_hops=1,
+        request=SearchRequest(
+            tenant_id=ctx.tenant_id,
+            query="Aurora",
+            mode="sparse",
+            filters=SearchFilters(languages=("und",)),
+        ),
+    )
+    assert language_result.graph is not None
+
     with pytest.raises(GraphProjectionError):
         await GraphExpansionService(ctx.session, ctx.storage, ctx.graph).expand(
             principal=ctx.principal, seeds=(), hops=3
         )
-    neighbors.assert_not_awaited()
 
 
 async def test_graph_projection_failure_rolls_back_artifact_without_ack(

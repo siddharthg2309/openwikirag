@@ -182,11 +182,9 @@ class AnswerWorkflow:
         spec = request.search(self.tenant_id)
         sources = tuple(SourceEvidence.model_validate(item) for item in state.get("sources") or [])
         if name == "authorize":
-            if request.graph_hops and (
-                self.search.graph is None or spec.filters != SearchFilters()
-            ):
+            if request.graph_hops and self.search.graph is None:
                 raise GenerationInputError(
-                    "Graph answers require configured, unfiltered graph retrieval."
+                    "Graph answers require configured graph retrieval."
                 )
             if request.rerank and self.search.reranker is None:
                 raise RerankingProviderError("No reranker configured.")
@@ -221,7 +219,10 @@ class AnswerWorkflow:
                     raise GraphProjectionError("Graph is unavailable.")
                 await self._fresh(sources)
                 expansion = await self.search.graph.expand(
-                    principal=self.principal, seeds=sources, hops=request.graph_hops
+                    principal=self.principal,
+                    seeds=sources,
+                    hops=request.graph_hops,
+                    filters=spec.filters,
                 )
                 merged = {item.identity: item for item in sources}
                 for neighbor in expansion.evidence:

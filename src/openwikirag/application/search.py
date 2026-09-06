@@ -17,7 +17,6 @@ from openwikirag.application.reranking import RerankingProviderError, RerankingS
 from openwikirag.application.retrieval import (
     CandidateRetrievalService,
     RetrievalInputError,
-    SearchFilters,
     SearchRequest,
 )
 from openwikirag.application.source_evidence import SourceEvidence
@@ -82,10 +81,6 @@ class SearchService:
             raise RetrievalInputError("Invalid graph hop limit.")
         if graph_hops and self.graph is None:
             raise GraphProjectionError("Graph expansion is not configured.")
-        if graph_hops and request.filters != SearchFilters():
-            raise RetrievalInputError(
-                "Graph expansion currently requires an unfiltered tenant search."
-            )
         candidates = await self.retrieval.retrieve(request)
         fused = ReciprocalRankFusionService(RrfFusionConfig(fused_limit=100)).fuse(candidates)
         grouped = deduplicate_evidence(fused)
@@ -131,7 +126,12 @@ class SearchService:
         sources = tuple(SourceEvidence.from_retrieval(hit.evidence) for hit in hits)
         expansion = None
         if graph_hops and self.graph is not None:
-            expansion = await self.graph.expand(principal=principal, seeds=sources, hops=graph_hops)
+            expansion = await self.graph.expand(
+                principal=principal,
+                seeds=sources,
+                hops=graph_hops,
+                filters=request.filters,
+            )
             merged = {item.identity: item for item in sources}
             for item in expansion.evidence:
                 merged.setdefault(item.evidence.identity, item.evidence)
