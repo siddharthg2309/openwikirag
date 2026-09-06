@@ -51,6 +51,7 @@ def test_compose_uses_container_dns_and_explicit_process_commands() -> None:
     assert "OPENWIKIRAG_QDRANT_URL: http://qdrant:6333" in compose
     assert 'command: ["uvicorn", "apps.api.app.main:app", "--host", "0.0.0.0"' in api
     assert 'command: ["python", "-m", "apps.worker.app.main"]' in worker
+    assert '"${OPENWIKIRAG_API_PORT:-8000}:8000"' in api
     assert "condition: service_healthy" in api
     assert "condition: service_healthy" in worker
 
@@ -63,3 +64,16 @@ def test_runtime_role_bootstrap_covers_existing_and_future_database_objects() ->
         assert "ON ALL TABLES IN SCHEMA public" in source
         assert "ON ALL SEQUENCES IN SCHEMA public" in source
         assert "ALTER DEFAULT PRIVILEGES IN SCHEMA public" in source
+
+
+def test_clean_smoke_operator_isolates_and_cleans_one_prefixed_project() -> None:
+    script = (ROOT / "ops/smoke_compose.sh").read_text()
+
+    assert "openwikirag-smoke-" in script
+    assert "validate_port" in script
+    assert "wait_for_url" in script
+    assert "/healthz" in script
+    assert "worker_cycle_completed" in script
+    assert "down --volumes --remove-orphans" in script
+    assert "trap cleanup EXIT" in script
+    assert "docker compose down" not in script

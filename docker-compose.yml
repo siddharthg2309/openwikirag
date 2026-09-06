@@ -112,7 +112,7 @@ services:
       qdrant:
         condition: service_started
     ports:
-      - "8000:8000"
+      - "${OPENWIKIRAG_API_PORT:-8000}:8000"
     volumes:
       - app-objects:/data
     read_only: true

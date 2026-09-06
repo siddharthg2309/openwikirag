@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.8.9"
+      - name: Install locked development environment
+        run: uv sync --locked --all-groups
+      - name: Run tests
+        run: uv run --no-sync pytest -q
+      - name: Run lint
+        run: uv run --no-sync ruff check .
+      - name: Run type checks
+        run: uv run --no-sync mypy
+      - name: Verify lockfile
+        run: uv lock --check
+      - name: Build application image
+        run: docker build --tag openwikirag:ci --file Dockerfile .
+
+  compose-smoke:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Run isolated Compose smoke test
+        env:
+          OPENWIKIRAG_SMOKE_API_PORT: "18080"
+          OPENWIKIRAG_SMOKE_POSTGRES_PORT: "15432"
+          OPENWIKIRAG_SMOKE_REDIS_PORT: "16381"
+          OPENWIKIRAG_SMOKE_QDRANT_HTTP_PORT: "16333"
+          OPENWIKIRAG_SMOKE_QDRANT_GRPC_PORT: "16334"
+        run: ops/smoke_compose.sh "openwikirag-smoke-${{ github.run_id }}"
