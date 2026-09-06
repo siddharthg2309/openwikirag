@@ -15,5 +15,6 @@ def test_readme_contains_architecture_and_explicit_scope_boundaries() -> None:
     assert "filesystem-backed object-volume adapter" in readme.lower()
     assert "Voice" in readme and "deferred" in readme
     assert "Qdrant and Neo4j are rebuildable projections" in readme
+    assert "Poppler" in readme and "Tesseract" in readme
     assert "implementation.md" not in readme
     assert "metrics.md" not in readme

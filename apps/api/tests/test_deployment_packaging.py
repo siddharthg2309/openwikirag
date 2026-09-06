@@ -24,6 +24,10 @@ def test_runtime_image_is_locked_and_non_root() -> None:
     assert "uv sync --locked --no-dev --no-editable" in dockerfile
     assert "COPY --from=builder" in dockerfile
     assert "USER openwikirag:openwikirag" in dockerfile
+    assert "poppler-utils" in dockerfile
+    assert "tesseract-ocr" in dockerfile
+    assert "tesseract-ocr-eng" in dockerfile
+    assert "rm -rf /var/lib/apt/lists/*" in dockerfile
 
 
 def test_compose_migration_gates_api_and_worker() -> None:
@@ -77,3 +81,19 @@ def test_clean_smoke_operator_isolates_and_cleans_one_prefixed_project() -> None
     assert "down --volumes --remove-orphans" in script
     assert "trap cleanup EXIT" in script
     assert "docker compose down" not in script
+
+
+def test_native_ocr_smoke_isolated_from_network_and_repository_writes() -> None:
+    script = (ROOT / "ops/smoke_ocr.sh").read_text()
+    fixture = (ROOT / "ops/ocr_native_smoke.py").read_text()
+
+    assert "--network none" in script
+    assert "--read-only" in script
+    assert "--tmpfs /tmp:rw,noexec,nosuid" in script
+    assert ":ro" in script
+    assert "docker compose" not in script
+    assert "PdfExtractor" in fixture
+    assert "PopplerPageRenderer" in fixture
+    assert "TesseractOcrEngine" in fixture
+    assert "/Image" in fixture
+    assert "span.kind == \"ocr\"" in fixture

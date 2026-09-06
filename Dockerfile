@@ -24,6 +24,13 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes \
+        poppler-utils \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --system --gid 10001 openwikirag \
     && useradd --system --uid 10001 --gid 10001 --home-dir /app --create-home openwikirag
 
