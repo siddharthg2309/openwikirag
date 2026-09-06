@@ -14,16 +14,97 @@ from openwikirag.infrastructure.repositories.knowledge import KnowledgeRepositor
 from openwikirag.infrastructure.storage import ObjectStorage
 
 Predicate = Literal["uses", "depends_on", "calls", "owned_by"]
-EXTRACTOR: Literal["explicit-relations-v1"] = "explicit-relations-v1"
-_RELATION = re.compile(
+RelationExtractor = Literal["explicit-relations-v1", "relations-v2"]
+EXTRACTOR: Literal["relations-v2"] = "relations-v2"
+LEGACY_EXTRACTOR: Literal["explicit-relations-v1"] = "explicit-relations-v1"
+_EXPLICIT_RELATION = re.compile(
     r"^\[([^\]\n]{1,120})\][ \t]+--(uses|depends_on|calls|owned_by)-->"
     r"[ \t]+\[([^\]\n]{1,120})\][ \t]*\.?$",
     re.MULTILINE,
 )
+_NATURAL_RELATION = re.compile(
+    r"^(?P<subject>\w[\w ./:@#-]{0,119}?)\s+"
+    r"(?P<predicate>uses|depends on|calls|is owned by)\s+"
+    r"(?P<object>\w[\w ./:@#-]{0,119})$",
+    re.IGNORECASE,
+)
+_SENTENCE = re.compile(r"[^.!?\r\n]+(?:[.!?](?=\s|$)|$)")
+_RELATION_WORD = re.compile(r"\b(?:uses|depends on|calls|is owned by)\b", re.IGNORECASE)
+_NATURAL_PREDICATES: dict[str, Predicate] = {
+    "uses": "uses",
+    "depends on": "depends_on",
+    "calls": "calls",
+    "is owned by": "owned_by",
+}
 
 
 class KnowledgeError(Exception):
     """Canonical graph evidence could not be safely constructed or loaded."""
+
+
+def _parse_relation_quote(
+    quote: str,
+) -> tuple[str, Predicate, str, Literal["explicit", "natural"]] | None:
+    """Parse only source quotations that match a complete supported assertion."""
+
+    explicit = _EXPLICIT_RELATION.fullmatch(quote)
+    if explicit is not None:
+        try:
+            return (
+                normalize_entity(explicit.group(1)),
+                cast(Predicate, explicit.group(2)),
+                normalize_entity(explicit.group(3)),
+                "explicit",
+            )
+        except ValueError:
+            return None
+
+    body = quote[:-1] if quote and quote[-1] in ".!?" else quote
+    natural = _NATURAL_RELATION.fullmatch(body)
+    if natural is None or _RELATION_WORD.search(natural.group("object")):
+        return None
+    try:
+        predicate_text = natural.group("predicate").casefold()
+        return (
+            normalize_entity(natural.group("subject")),
+            _NATURAL_PREDICATES[predicate_text],
+            normalize_entity(natural.group("object")),
+            "natural",
+        )
+    except (KeyError, ValueError):
+        return None
+
+
+def _iter_relation_quotes(text: str) -> tuple[tuple[int, str, str, Predicate, str], ...]:
+    """Return matches as (offset, quote, subject, predicate, object)."""
+
+    matches: list[tuple[int, str, str, Predicate, str]] = []
+    occupied: list[tuple[int, int]] = []
+    for match in _EXPLICIT_RELATION.finditer(text):
+        quote = match.group(0)
+        parsed = _parse_relation_quote(quote)
+        if parsed is None:
+            continue
+        subject, predicate, object_name, style = parsed
+        matches.append((match.start(), quote, subject, predicate, object_name))
+        if style == "explicit":
+            occupied.append((match.start(), match.end()))
+
+    for sentence in _SENTENCE.finditer(text):
+        raw = sentence.group(0)
+        leading = len(raw) - len(raw.lstrip())
+        trailing = len(raw) - len(raw.rstrip())
+        start = sentence.start() + leading
+        end = sentence.end() - trailing
+        if start >= end or any(start < right and left < end for left, right in occupied):
+            continue
+        quote = text[start:end]
+        parsed = _parse_relation_quote(quote)
+        if parsed is None or parsed[3] != "natural":
+            continue
+        subject, predicate, object_name, _ = parsed
+        matches.append((start, quote, subject, predicate, object_name))
+    return tuple(sorted(matches, key=lambda item: (item[0], item[1])))
 
 
 def normalize_entity(name: str) -> str:
@@ -58,7 +139,7 @@ class RelationFact(BaseModel):
 class KnowledgeArtifact(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     schema_version: Literal["knowledge-v1"] = "knowledge-v1"
-    extractor: Literal["explicit-relations-v1"] = EXTRACTOR
+    extractor: RelationExtractor = EXTRACTOR
     id: UUID
     tenant_id: UUID
     document_id: UUID
@@ -93,14 +174,15 @@ class KnowledgeArtifact(BaseModel):
             ).hexdigest()
             if fact.id != expected:
                 raise ValueError("Fact identity mismatch.")
-            match = _RELATION.fullmatch(fact.quote)
+            parsed = _parse_relation_quote(fact.quote)
             if (
-                match is None
-                or match.group(2) != fact.predicate
-                or entity_id(self.tenant_id, match.group(1)) != fact.subject_id
-                or entity_id(self.tenant_id, match.group(3)) != fact.object_id
+                parsed is None
+                or parsed[1] != fact.predicate
+                or entity_id(self.tenant_id, parsed[0]) != fact.subject_id
+                or entity_id(self.tenant_id, parsed[2]) != fact.object_id
+                or (self.extractor == LEGACY_EXTRACTOR and parsed[3] != "explicit")
             ):
-                raise ValueError("Relationship is not supported by its explicit quotation.")
+                raise ValueError("Relationship is not supported by its source quotation.")
         return self
 
     @property
@@ -130,26 +212,32 @@ class KnowledgeArtifactService:
                 raise KnowledgeError("Graph source lineage mismatch.")
             artifact_id = uuid5(manifest_id, EXTRACTOR)
             entities: dict[str, Entity] = {}
-            facts = []
+            facts: list[RelationFact] = []
+            fact_ids: set[str] = set()
             # Parent passages avoid duplicate assertions from child overlap.
             for chunk in manifest.chunks:
                 if chunk.chunk_kind != "parent":
                     continue
-                for match in _RELATION.finditer(chunk.text):
-                    names = (normalize_entity(match.group(1)), normalize_entity(match.group(3)))
+                for offset, quote, subject, predicate, object_name in _iter_relation_quotes(
+                    chunk.text
+                ):
+                    names = (subject, object_name)
                     ids = tuple(entity_id(tenant_id, name) for name in names)
                     for name, identity in zip(names, ids, strict=True):
                         entities[identity] = Entity(id=identity, name=name)
-                    start = chunk.normalized_start_char + match.start()
-                    quote = match.group(0)
+                    start = chunk.normalized_start_char + offset
+                    fact_id = hashlib.sha256(
+                        f"{artifact_id}:{chunk.chunk_id}:{start}:{quote}".encode()
+                    ).hexdigest()
+                    if fact_id in fact_ids:
+                        continue
+                    fact_ids.add(fact_id)
                     facts.append(
                         RelationFact(
-                            id=hashlib.sha256(
-                                f"{artifact_id}:{chunk.chunk_id}:{start}:{quote}".encode()
-                            ).hexdigest(),
+                            id=fact_id,
                             subject_id=ids[0],
                             object_id=ids[1],
-                            predicate=cast(Predicate, match.group(2)),
+                            predicate=predicate,
                             chunk_id=chunk.chunk_id,
                             quote=quote,
                             start_char=start,
