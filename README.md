@@ -1,9 +1,15 @@
 # OpenWikiRAG
 
+[![CI](https://github.com/siddharthg2309/openwikirag/actions/workflows/ci.yml/badge.svg)](https://github.com/siddharthg2309/openwikirag/actions/workflows/ci.yml)
+
 OpenWikiRAG is a multi-tenant enterprise knowledge platform that converts
 private documents into structured knowledge and citation-grounded answers.
 It combines WikiRAG, hybrid retrieval, knowledge graphs, durable document
 processing, and secure answer generation.
+
+The current repository covers the non-voice knowledge and answer path. Voice
+input/output is intentionally deferred, and production deployment guarantees
+are not implied by the local reference deployment.
 
 ## Project overview
 
@@ -118,6 +124,9 @@ source before being returned.
   current canonical evidence before an answer is published.
 - **Private conversations:** user-owned conversation history and explicit memory
   are isolated from enterprise evidence and support deletion and retention.
+- **Recovery boundary:** PostgreSQL and immutable object bytes are backed up
+  together; Qdrant and Neo4j are rebuildable projections rather than sources
+  of truth.
 
 ## Technology stack
 
@@ -127,7 +136,7 @@ source before being returned.
 | Database | PostgreSQL 16, SQLAlchemy 2, Alembic | Source of truth, transactions, constraints, RLS, and audit data |
 | Authentication | JWT, refresh-token rotation, Argon2 | Identity and session security |
 | Async processing | Redis 7 Streams | Outbox relay, durable jobs, retries, and recovery |
-| Object storage | MinIO-compatible storage | Raw uploads and canonical immutable artifacts |
+| Object storage | Filesystem-backed object-volume adapter | Raw uploads and canonical immutable artifacts in the current local deployment |
 | Vector search | Qdrant 1.14.1 | Dense and sparse tenant-filtered retrieval |
 | Knowledge graph | Neo4j 5.26 | Relationship projection and bounded graph expansion |
 | Knowledge layer | WikiRAG artifacts and provenance contracts | Structured, reviewable document knowledge |
@@ -135,4 +144,4 @@ source before being returned.
 | Local model | Ollama with `qwen2.5:7b` support | Local answer generation and model identity checks |
 | Optional reranking | Sentence Transformers CrossEncoder | Pairwise candidate reranking |
 | Quality | Pytest, Ruff, Mypy | Tests, linting, and strict type checking |
-| Infrastructure | Docker Compose | Local PostgreSQL, Redis, MinIO, Qdrant, and Neo4j services |
+| Infrastructure | Docker Compose | Local PostgreSQL, Redis, Qdrant, API, and worker services; Neo4j/MinIO are optional boundaries |
