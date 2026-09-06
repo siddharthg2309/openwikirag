@@ -1827,3 +1827,35 @@ Status: unanswered; pause overridden through Phase9. Objective: avoid repeated r
 5. Explain the tradeoff between caching scores and complete answers.
 
 Learner answers: pending.
+
+## Slice 9.5 — Conversation recovery across API processes
+
+Status: unanswered; pause overridden through Phase 9.
+Objective: prove that private conversation rows survive an actual API process restart and remain readable through the authenticated HTTP route.
+Explanation: An in-process session restart tests database durability, but a deployed API also has process import, configuration, dependency, connection-pool, and authentication boundaries. The opt-in test seeds one owner-scoped conversation, starts Uvicorn process A, reads it over HTTP, stops A, starts process B against the same PostgreSQL database, and reads it again. Because the fixture has only a user message, this proof isolates conversation persistence from model inference and source citation validation.
+
+```text
+PostgreSQL seed
+  -> JWT + process A
+  -> HTTP GET conversation
+  -> stop process A
+  -> JWT + process B
+  -> HTTP GET same conversation
+  -> same owner/title/message sequence
+```
+
+Failure branches: startup/health failure, invalid token, missing membership, database outage, owner mismatch, missing rows, or changed ordering fails the test. The process cleanup is bounded even when an assertion fails.
+
+Trade-off: this proves route-level recovery, not in-flight checkpoint recovery, multi-process load, deployment orchestration, or semantic answer quality. Those require separate experiments.
+
+References: D-060, F-059, `apps/api/app/conversation_routes.py`, `apps/api/tests/test_api_process_restart.py`.
+
+1. Why is an ASGI in-process test insufficient for an API-restart claim?
+2. Trace the request from JWT verification through the owner-scoped PostgreSQL query.
+3. What failure would indicate data loss versus an authentication/configuration problem?
+4. Why does the test intentionally avoid model inference and vector retrieval?
+5. Explain the exact restart claim you can make, and name one thing it does not prove.
+
+Learner answers: pending.
+
+Verification: the opt-in two-process HTTP test passed (`1 passed in 6.40s`). Route-level conversation recovery is verified; the quiz and independent learner explanation remain pending.

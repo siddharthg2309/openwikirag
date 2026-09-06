@@ -11,7 +11,7 @@ Date: 2026-09-05. Audit in progress; this is not a full-project completion claim
 | Explicit memory and deletion | test_answer_runs.py withdrawal-before-inference and deletion-during-inference | Verified |
 | Cross-store purge | test_retention.py actual PostgreSQL/LangGraph deadline and deletion | Verified |
 | Scoped cache | test_score_cache.py key dimensions/Redis TTL; workflow reuse test | Verified |
-| Conversation resumes after API restart | fresh-session persistence is proven; actual separate API-process restart experiment pending | Incomplete |
+| Conversation resumes after API restart | opt-in test starts two Uvicorn processes and reads the same owner-scoped conversation over HTTP before/after restart | Verified |
 
 Latest regression: 384 passed, two optional model tests skipped; one known local-Qdrant warning. Strict typing passed for141 source files.
 
