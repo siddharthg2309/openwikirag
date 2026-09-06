@@ -5,6 +5,13 @@ from typing import Literal, Self
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_PRODUCTION_ENVIRONMENTS = frozenset({"production", "prod"})
+_DEVELOPMENT_PLACEHOLDERS = (
+    "openwikirag-development-secret-change-me-now",
+    "replace-with-a-long-development-secret-at-least-32-chars",
+    "openwikirag-dev-password",
+)
+
 
 class Settings(BaseSettings):
     """Typed configuration loaded from environment variables.
@@ -18,6 +25,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     environment: str = Field(default="development", min_length=1)
@@ -96,6 +104,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_reranker(self) -> Self:
+        is_production = self.environment.casefold() in _PRODUCTION_ENVIRONMENTS
         if self.max_request_bytes < self.max_upload_bytes:
             raise ValueError("The HTTP request bound must cover the decoded upload bound.")
         if bool(self.reranker_model.strip()) != bool(self.reranker_revision):
@@ -118,7 +127,7 @@ class Settings(BaseSettings):
             )
         if (
             self.object_storage_backend == "s3"
-            and self.environment.casefold() in {"production", "prod"}
+            and is_production
             and self.object_store_endpoint_url.strip()
             and not self.object_store_endpoint_url.startswith("https://")
         ):
@@ -148,13 +157,39 @@ class Settings(BaseSettings):
             if not algorithms or any(item not in supported for item in algorithms):
                 raise ValueError("OIDC algorithms must be configured asymmetric JWT algorithms.")
             if (
-                self.environment.casefold() in {"production", "prod"}
+                is_production
                 and not self.oidc_jwks_url.startswith("https://")
             ):
                 raise ValueError("Production OIDC JWKS URL must use HTTPS.")
-        elif self.environment.casefold() in {"production", "prod"}:
+        elif is_production:
             raise ValueError("Production authentication requires OIDC mode.")
+        if is_production:
+            self._validate_production_configuration()
         return self
+
+    def _validate_production_configuration(self) -> None:
+        """Reject local-only storage and known development secrets in production."""
+
+        if self.object_storage_backend != "s3":
+            raise ValueError("Production object storage must use an S3-compatible backend.")
+        if self._contains_development_placeholder(self.jwt_secret):
+            raise ValueError("Production JWT secret must not use a development placeholder.")
+        if any(
+            self._contains_development_placeholder(value)
+            for value in (self.database_url, self.migration_database_url)
+        ):
+            raise ValueError(
+                "Production database credentials must not use a development placeholder."
+            )
+        if self.graph_enabled and self._contains_development_placeholder(self.neo4j_password):
+            raise ValueError(
+                "Production Neo4j credentials must not use a development placeholder."
+            )
+
+    @staticmethod
+    def _contains_development_placeholder(value: str) -> bool:
+        lowered = value.casefold()
+        return any(placeholder in lowered for placeholder in _DEVELOPMENT_PLACEHOLDERS)
 
     @property
     def oidc_algorithm_list(self) -> tuple[str, ...]:
