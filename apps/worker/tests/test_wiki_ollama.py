@@ -110,6 +110,8 @@ def test_provider_runs_digest_checked_structured_exchange() -> None:
     assert "untrusted content" in chat_payload["messages"][0]["content"]
     assert "section_path" in chat_payload["messages"][1]["content"]
     assert "return null/empty generated fields" in chat_payload["messages"][1]["content"]
+    assert "source_span_catalog" in chat_payload["messages"][1]["content"]
+    assert "wiki-generation-prompt-v3" in chat_payload["messages"][1]["content"]
 
 
 def test_provider_rejects_model_digest_drift_after_inference() -> None:

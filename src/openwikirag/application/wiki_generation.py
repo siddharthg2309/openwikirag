@@ -4,9 +4,9 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal, Protocol, Self
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from openwikirag.application.extraction import NormalizedDocument
 from openwikirag.application.metadata import MetadataEvidence
@@ -17,7 +17,9 @@ from openwikirag.application.wiki import (
 )
 
 WIKI_GENERATION_SCHEMA_VERSION: Literal["wiki-generation-v1"] = "wiki-generation-v1"
-WIKI_GENERATION_PROMPT_VERSION: Literal["wiki-generation-prompt-v2"] = "wiki-generation-prompt-v2"
+WIKI_GENERATION_PROMPT_VERSION: Literal["wiki-generation-prompt-v3"] = "wiki-generation-prompt-v3"
+MAX_WIKI_GENERATION_SOURCE_SPANS = 512
+MAX_WIKI_GENERATION_SOURCE_CATALOG_BYTES = 128 * 1024
 
 
 class WikiGenerationError(Exception):
@@ -55,24 +57,49 @@ class GeneratedWikiContent(BaseModel):
     references: tuple[WikiReference, ...] = ()
 
 
+class WikiGenerationSourceSpan(BaseModel):
+    """A server-derived source record exposed to a generation provider."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    raw_text: str = Field(min_length=1)
+    normalized_start_char: int = Field(ge=0)
+    normalized_end_char: int = Field(gt=0)
+    section_path: tuple[str, ...] = ()
+    page_number: int | None = Field(default=None, ge=1)
+    kind: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_range(self) -> Self:
+        if self.normalized_end_char <= self.normalized_start_char:
+            raise ValueError("Generation source spans must have a positive range.")
+        if any(not section for section in self.section_path):
+            raise ValueError("Generation source span paths cannot be empty.")
+        return self
+
+
 class WikiGenerationRequest(BaseModel):
     """Immutable provider input with a structural boundary around source text."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    prompt_version: Literal["wiki-generation-prompt-v2"] = WIKI_GENERATION_PROMPT_VERSION
+    prompt_version: Literal["wiki-generation-prompt-v3"] = WIKI_GENERATION_PROMPT_VERSION
     page: WikiPage
     document_text: str = Field(min_length=1)
     config_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    source_spans: tuple[WikiGenerationSourceSpan, ...] = ()
 
     def prompt_text(self) -> str:
         """Serialize instructions and source data without treating source as control text."""
 
+        source_span_catalog = _bounded_source_span_catalog(self.source_spans)
         prompt_payload = {
             "config_hash": self.config_hash,
             "document_data": self.document_text,
             "page_skeleton": self.page.canonical_payload(),
             "prompt_version": self.prompt_version,
+            "source_span_catalog": source_span_catalog,
+            "source_span_catalog_truncated": len(source_span_catalog) != len(self.source_spans),
         }
         return (
             "OpenWikiRAG structured extraction task.\n"
@@ -85,6 +112,10 @@ class WikiGenerationRequest(BaseModel):
             "Use exact contiguous text from document_data; copy section_path and "
             "page_number from the matching source span. If valid contextual evidence "
             "cannot be produced, return null/empty generated fields instead of guessing.\n"
+            "SOURCE_SPAN_CATALOG contains server-derived records with exact source "
+            "context. Use only records present in that catalog for evidence metadata. "
+            "If source_span_catalog_truncated is true, do not cite text outside the "
+            "catalog; return null/empty generated fields instead of guessing.\n"
             "INPUT_JSON\n"
             + json.dumps(
                 prompt_payload,
@@ -99,6 +130,31 @@ class WikiGenerationRequest(BaseModel):
         """Return the identity of the exact provider prompt envelope."""
 
         return hashlib.sha256(self.prompt_text().encode("utf-8")).hexdigest()
+
+
+def _bounded_source_span_catalog(
+    source_spans: tuple[WikiGenerationSourceSpan, ...],
+) -> list[dict[str, object]]:
+    """Serialize a bounded prefix without splitting an evidence record."""
+
+    catalog: list[dict[str, object]] = []
+    encoded_size = 2
+    for source_span in source_spans:
+        payload = source_span.model_dump(mode="json")
+        item_size = len(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
+                "utf-8"
+            )
+        )
+        separator_size = 1 if catalog else 0
+        if (
+            len(catalog) >= MAX_WIKI_GENERATION_SOURCE_SPANS
+            or encoded_size + separator_size + item_size > MAX_WIKI_GENERATION_SOURCE_CATALOG_BYTES
+        ):
+            break
+        catalog.append(payload)
+        encoded_size += separator_size + item_size
+    return catalog
 
 
 class WikiGenerationProvider(Protocol):
@@ -198,6 +254,19 @@ class StructuredWikiGenerator:
                 page=page,
                 document_text=document.text,
                 config_hash=config_hash,
+                source_spans=tuple(
+                    WikiGenerationSourceSpan(
+                        raw_text=document.text[
+                            span.normalized_start_char : span.normalized_end_char
+                        ],
+                        normalized_start_char=span.normalized_start_char,
+                        normalized_end_char=span.normalized_end_char,
+                        section_path=span.section_path,
+                        page_number=span.page_number,
+                        kind=span.kind,
+                    )
+                    for span in document.spans
+                ),
             )
         except ValidationError as exc:
             raise WikiGenerationInputError("The generation request is invalid.") from exc

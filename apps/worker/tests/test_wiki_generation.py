@@ -139,6 +139,37 @@ def test_provider_receives_json_data_boundary_for_prompt_like_document_text() ->
     assert "untrusted document data" in prefix
     assert payload["document_data"] == document.text
     assert payload["page_skeleton"]["source_artifact_checksum"] == document.checksum_sha256
+    assert payload["prompt_version"] == "wiki-generation-prompt-v3"
+    assert payload["source_span_catalog_truncated"] is False
+    assert payload["source_span_catalog"] == [
+        {
+            "kind": span.kind,
+            "normalized_end_char": span.normalized_end_char,
+            "normalized_start_char": span.normalized_start_char,
+            "page_number": span.page_number,
+            "raw_text": document.text[span.normalized_start_char : span.normalized_end_char],
+            "section_path": list(span.section_path),
+        }
+        for span in document.spans
+    ]
+
+
+def test_source_span_catalog_is_bounded_and_explicitly_truncated() -> None:
+    document, page, _ = _wiki_inputs(
+        ("# Overview\n" + "\n".join(f"line {index}" for index in range(600))).encode()
+    )
+    provider = FakeProvider({"summary": None, "definitions": [], "references": []})
+
+    StructuredWikiGenerator(provider=provider).generate(
+        document=document,
+        page=page,
+        config_hash=CONFIG_HASH,
+    )
+
+    payload = json.loads(provider.requests[0].prompt_text().split("INPUT_JSON\n", 1)[1])
+    assert len(payload["source_span_catalog"]) <= 512
+    assert payload["source_span_catalog_truncated"] is True
+    assert len(json.dumps(payload["source_span_catalog"]).encode()) <= 128 * 1024
 
 
 @pytest.mark.parametrize(
