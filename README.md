@@ -110,6 +110,20 @@ source before being returned.
    refuses unsupported questions, persists the result, and streams progress to
    the client.
 
+## Start locally
+
+```bash
+./ops/start_project.sh
+```
+
+The launcher starts PostgreSQL, Redis, Qdrant, the migration gate, the API, and
+the worker, then waits for API and worker readiness. Add `--all` when you also
+need the optional Neo4j and MinIO containers. It preserves Compose volumes and
+does not stop unrelated projects.
+
+If a default host port is already in use, override that mapping for the
+launcher, for example: `OPENWIKIRAG_REDIS_PORT=16379 ./ops/start_project.sh`.
+
 ## Key engineering properties
 
 - **Tenant isolation:** JWT authentication, RBAC, membership checks, composite

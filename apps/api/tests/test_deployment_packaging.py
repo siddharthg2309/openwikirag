@@ -103,6 +103,25 @@ def test_s3_smoke_mode_starts_minio_and_uses_container_dns() -> None:
     assert "OPENWIKIRAG_MINIO_API_PORT" in script
 
 
+def test_persistent_local_launcher_gates_startup_without_teardown() -> None:
+    script = (ROOT / "ops/start_project.sh").read_text()
+
+    assert script.startswith("#!/usr/bin/env bash")
+    assert "project_name=openwikirag" in script
+    assert "openwikirag-[A-Za-z0-9_-]*" in script
+    assert "start_optional=false" in script
+    assert "services=(postgres redis qdrant)" in script
+    assert "services+=(neo4j minio)" in script
+    assert 'up --detach --build "${services[@]}"' in script
+    assert "wait_for_url" in script
+    assert "/healthz" in script
+    assert "up --build migrate" in script
+    assert 'up --detach --build api worker' in script
+    assert "State.Health.Status" in script
+    assert "docker compose down" not in script
+    assert "down --volumes" not in script
+
+
 def test_native_ocr_smoke_isolated_from_network_and_repository_writes() -> None:
     script = (ROOT / "ops/smoke_ocr.sh").read_text()
     fixture = (ROOT / "ops/ocr_native_smoke.py").read_text()
